@@ -93,8 +93,13 @@ PanelWindow {
 
   readonly property real barSpace: mission ? spacesBar.reservedHeight : 0
   // The bar's size follows the number of desktops, which rebuild() itself
-  // sets, so lay out again after the change rather than inside it.
-  onBarSpaceChanged: Qt.callLater(rebuild)
+  // sets, so lay out again after the change rather than inside it, and only
+  // if the layout didn't already leave room for the new size.
+  property real layoutBarSpace: -1
+  onBarSpaceChanged: Qt.callLater(relayoutForBar)
+  function relayoutForBar() {
+    if (barSpace !== layoutBarSpace) rebuild()
+  }
   onWidthChanged: rebuild()
   onHeightChanged: rebuild()
   onShowsHereChanged: {
@@ -155,6 +160,7 @@ PanelWindow {
     var minimized = expose && settings.showMinimized !== false ? Model.minimizedWindows(snap, service.exposeClass) : []
 
     var side = Math.round(Math.max(40, width * 0.045))
+    layoutBarSpace = barSpace
     var top = expose ? 96 : barSpace + 26
     var bottom = minimized.length ? Math.round(height * 0.2) + 40 : 64
     var area = { x: side, y: top, w: Math.max(100, width - side * 2), h: Math.max(100, height - top - bottom) }
