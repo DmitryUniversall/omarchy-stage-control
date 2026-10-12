@@ -567,12 +567,18 @@ PanelWindow {
     }
 
     Repeater {
-      model: screenGhost.wanted ? [
+      // As text, so the strips (each with its own copy of its edge) are made
+      // again only when the edges change, not on every read of Hyprland's
+      // state, which hands out a new monitor object each time. But once per
+      // opening: a copy (live: false) is taken once per ShaderEffectSource,
+      // and the overlay's window, with what it took, is new every opening.
+      readonly property string strips: JSON.stringify(win.showsHere && screenGhost.wanted ? [
         { edge: "top", size: screenGhost.reserved.top },
         { edge: "bottom", size: screenGhost.reserved.bottom },
         { edge: "left", size: screenGhost.reserved.left },
         { edge: "right", size: screenGhost.reserved.right }
-      ].filter(function(strip) { return strip.size > 0 }) : []
+      ].filter(function(strip) { return strip.size > 0 }) : [])
+      model: JSON.parse(strips)
 
       delegate: Item {
         id: strip
@@ -604,9 +610,12 @@ PanelWindow {
     // Control opens and back in as it closes. Drawn over the windows, as they
     // were on screen.
     Repeater {
-      model: win.showsHere && win.monitor && win.service ? Model.surfaces(win.service.layers, win.monitor).filter(function(surface) {
-        return surface.namespace !== "omarchy-bar"
-      }) : []
+      // As text, for the same reasons as the strips above.
+      readonly property string surfaces: JSON.stringify(win.showsHere && win.monitor && win.service
+        ? Model.surfaces(win.service.layers, win.monitor).filter(function(surface) {
+          return surface.namespace !== "omarchy-bar"
+        }) : [])
+      model: JSON.parse(surfaces)
 
       delegate: ShaderEffectSource {
         required property var modelData
