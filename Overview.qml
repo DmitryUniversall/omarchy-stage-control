@@ -433,6 +433,7 @@ PanelWindow {
 
       readonly property bool blurs: win.settings.background !== "dim"
       readonly property real dim: (win.settings.dim === undefined ? 25 : win.settings.dim) / 100
+      readonly property vector4d crop: cropFor(wallpaperImage.implicitWidth, wallpaperImage.implicitHeight, width, height)
 
       // The part of a pw x ph image that PreserveAspectCrop shows in a
       // w x h item, as QQuickImage works it out: centered, in whole pixels.
@@ -484,24 +485,40 @@ PanelWindow {
         property var wallpaper: wallpaperImage
         // With the dim background there's no blur to draw (or to render).
         property var blurred: backdrop.blurs ? blurLayer : wallpaperImage
-        property vector4d crop: backdrop.cropFor(wallpaperImage.implicitWidth, wallpaperImage.implicitHeight, width, height)
+        property vector4d crop: backdrop.crop
         // The blur showed only above 1% (below that it wasn't drawn at all).
         readonly property real blurShown: win.preparing ? 0.5 : win.smooth(0, 0.6, win.e)
         property real blurAmount: backdrop.blurs && blurShown > 0.01 ? blurShown : 0
         property real dim: backdrop.dim * win.e
         fragmentShader: Qt.resolvedUrl("shaders/backdrop.frag.qsb")
       }
+
+      // The backdrop as it is on the open stage, for the Liquid Glass panes
+      // (glassBackdrop below). It doesn't follow the animation, so the panes
+      // show the stage's own backdrop from their first frame, and nothing has
+      // to be taken again when the stage settles.
+      ShaderEffect {
+        id: settledBackdrop
+        anchors.fill: parent
+        visible: false
+        property var wallpaper: wallpaperImage
+        property var blurred: backdrop.blurs ? blurLayer : wallpaperImage
+        property vector4d crop: backdrop.crop
+        property real blurAmount: backdrop.blurs ? 1 : 0
+        property real dim: backdrop.dim
+        fragmentShader: Qt.resolvedUrl("shaders/backdrop.frag.qsb")
+      }
     }
 
-    // The backdrop as one texture, for the Liquid Glass panes to refract.
-    // Half resolution with mipmaps: the panes read it frosted anyway. Taken
-    // once the stage has settled and kept while it opens and closes (the
-    // panes fade in and out then), instead of on every frame of the way.
+    // The open stage's backdrop as one texture, for the Liquid Glass panes
+    // to refract. Half resolution with mipmaps: the panes read it frosted
+    // anyway. It changes only with the wallpaper or the settings, so it's
+    // rendered once while the stage prepares, not while it moves.
     ShaderEffectSource {
       id: glassBackdrop
-      sourceItem: backdrop
+      sourceItem: settledBackdrop
       textureSize: Qt.size(Math.max(1, Math.round(win.width / 2)), Math.max(1, Math.round(win.height / 2)))
-      live: win.settled
+      live: true
       mipmap: true
       hideSource: false
       visible: false
