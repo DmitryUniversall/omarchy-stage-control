@@ -98,6 +98,7 @@ function snapshot(clients, monitors, workspaces) {
       address: c.address,
       cls: String(c.class || c.initialClass || ""),
       title: String(c.title || c.initialTitle || ""),
+      initialTitle: String(c.initialTitle || ""),
       workspace: c.workspace.id,
       workspaceName: wsName,
       special: c.workspace.id < 0 || wsName.indexOf("special:") === 0,

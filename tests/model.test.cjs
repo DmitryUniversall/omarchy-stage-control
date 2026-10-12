@@ -335,4 +335,18 @@ function applyPlan(snap, plan) {
   passed++;
 }
 
+// A window's title, and its first one: the stage falls back to the first
+// when a window clears its title.
+{
+  const snap = world([
+    client("0xa", "kitty", 1, [0, 0], [10, 10], { title: "", initialTitle: "kitty" }),
+    client("0xb", "foot", 1, [20, 0], [10, 10]),
+  ], [ws(1)]);
+  assert.equal(snap.windows[0].title, "kitty", "no title: the first");
+  assert.equal(snap.windows[0].initialTitle, "kitty");
+  assert.equal(snap.windows[1].title, "foot window");
+  assert.equal(snap.windows[1].initialTitle, "", "no first title given");
+  passed++;
+}
+
 console.log(`model: ${passed} checks passed`);

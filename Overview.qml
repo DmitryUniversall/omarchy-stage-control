@@ -192,7 +192,7 @@ PanelWindow {
         : { x: to.x + to.w * 0.04, y: to.y + to.h * 0.04 + 30, w: to.w * 0.92, h: to.h * 0.92 }
       var app = service.appFor(w.cls)
       data[w.address] = {
-        address: w.address, title: w.title, cls: w.cls, icon: app.icon, appName: app.name,
+        address: w.address, title: w.title, initialTitle: w.initialTitle, cls: w.cls, icon: app.icon, appName: app.name,
         from: from, to: to, size: { w: w.w, h: w.h }, onScreen: onScreen, minimized: false,
         workspace: w.workspace, z: (w.floating ? 200 : 0) + (windows.length - index)
       }
@@ -205,7 +205,7 @@ PanelWindow {
       if (!to) return
       var app = service.appFor(w.cls)
       data[w.address] = {
-        address: w.address, title: w.title, cls: w.cls, icon: app.icon, appName: app.name,
+        address: w.address, title: w.title, initialTitle: w.initialTitle, cls: w.cls, icon: app.icon, appName: app.name,
         from: { x: to.x, y: to.y + 60, w: to.w, h: to.h }, to: to, size: { w: w.w, h: w.h },
         onScreen: false, minimized: true, workspace: w.workspace, z: 0
       }

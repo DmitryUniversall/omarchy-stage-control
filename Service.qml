@@ -288,15 +288,9 @@ Item {
     onTriggered: root.refresh(null)
   }
 
-  // A new title only changes a label, and some windows retitle themselves
-  // many times a second (a terminal running a build, a browser tab with a
-  // timer), so titles are read at most twice a second instead of each time.
-  Timer {
-    id: titleTimer
-    interval: 500
-    onTriggered: root.refresh(null)
-  }
-
+  // A new title isn't among them: tiles show titles live from Hyprland's
+  // toplevels (WindowTile.title), and some windows retitle themselves many
+  // times a second (a terminal running a build, a browser tab with a timer).
   readonly property var followedEvents: [
     "openwindow", "closewindow", "movewindowv2", "workspacev2", "focusedmonv2", "fullscreen",
     "changefloatingmode", "createworkspacev2", "destroyworkspacev2",
@@ -313,8 +307,6 @@ Item {
         root.scheduleRegister()
       } else if (!root.shown) {
         return
-      } else if (name === "windowtitlev2") {
-        if (!titleTimer.running) titleTimer.start()
       } else if (root.followedEvents.indexOf(name) >= 0) {
         followTimer.restart()
       }

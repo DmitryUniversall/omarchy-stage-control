@@ -36,6 +36,11 @@ Item {
     Hyprland.toplevels.values
     return service ? service.toplevelFor(modelData) : null
   }
+  // The window's title, live: Hyprland's toplevel follows every retitle on
+  // its own, so a new title needn't read all of Hyprland's state again. As
+  // in a read of Hyprland's state, a window without a title shows its first.
+  readonly property string title: handle ? (handle.title || (info ? info.initialTitle : ""))
+    : (info ? info.title : "")
 
   function lerp(a, b, t) { return a + (b - a) * t }
   function smooth(edge0, edge1, x) {
@@ -206,7 +211,7 @@ Item {
   Glass {
     id: titlePill
     readonly property string titles: tile.overview ? tile.overview.windowTitles : "hover"
-    readonly property bool wanted: !!tile.info && tile.info.title !== "" && !tile.dragging && !tile.dropping
+    readonly property bool wanted: !!tile.info && tile.title !== "" && !tile.dragging && !tile.dropping
       && ((titles === "always" && !tile.overview.grouped) || (titles !== "never" && tile.lit))
     anchors.horizontalCenter: frame.horizontalCenter
     anchors.top: frame.bottom
@@ -225,7 +230,7 @@ Item {
       id: titleText
       anchors.centerIn: parent
       width: Math.min(implicitWidth, parent.width - 24)
-      text: tile.info ? tile.info.title : ""
+      text: tile.title
       textFormat: Text.PlainText
       elide: Text.ElideRight
       horizontalAlignment: Text.AlignHCenter
