@@ -53,6 +53,8 @@ Item {
   readonly property real thumbWidth: strip ? strip.thumbW : 0
   readonly property real collapsedWidth: Math.min(nameWidth, strip ? strip.collapsedSlot : nameWidth)
   readonly property real pillWidth: Math.round(collapsedWidth + (Math.min(nameWidth, thumbWidth) - collapsedWidth) * ex)
+  // The name's room inside the pill, shown or being edited.
+  readonly property real textWidth: Math.max(0, pillWidth - 26)
   width: Math.round(collapsedWidth + (thumbWidth - collapsedWidth) * ex)
   height: strip ? strip.thumbH + 10 + strip.labelH : 0
 
@@ -256,7 +258,7 @@ Item {
     Text {
       id: labelText
       anchors.centerIn: parent
-      width: Math.max(0, thumb.pillWidth - 26)
+      width: thumb.textWidth
       visible: !thumb.renaming
       text: thumb.label
       textFormat: Text.PlainText
@@ -273,7 +275,7 @@ Item {
     TextInput {
       id: nameInput
       anchors.centerIn: parent
-      width: Math.max(0, thumb.pillWidth - 26)
+      width: thumb.textWidth
       visible: thumb.renaming
       enabled: thumb.renaming
       horizontalAlignment: TextInput.AlignHCenter
