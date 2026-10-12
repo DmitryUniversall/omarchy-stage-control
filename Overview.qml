@@ -119,7 +119,13 @@ PanelWindow {
     selectedAddress = ""
     cancelDrag()
     spacesBar.commitRename()
+    spacesBar.cancelDesktopDrag()
+    // Where windows were on the last opening's screen capture: not this one's.
+    if (!showsHere) ghostRects = ({})
     rebuild()
+    // Shown on a stage that is already open (App Exposé on another display
+    // turned into the stage): its capture is being taken now.
+    if (showsHere && service && service.revealed) takeGhostRects()
   }
 
   Connections {
@@ -132,9 +138,11 @@ PanelWindow {
   }
 
   // Only the stage has a Spaces bar. App Exposé hides it, so it keeps no
-  // desktops (and their thumbnails capture no windows).
+  // desktops (and their thumbnails capture no windows). While the stage is
+  // closed the thumbnails stay, as the tiles do (see rebuild()).
   function rebuildDesktops() {
-    if (!showsHere || !service || !mission) {
+    if (!service || !service.shown) return
+    if (!stageHere() || service.mode !== "mission") {
       setModel("desktopIds", [])
       setModel("desktopData", {})
       return
@@ -149,8 +157,29 @@ PanelWindow {
     setModel("desktopData", data)
   }
 
+  // While the stage is closed, the tiles and thumbnails are kept for the next
+  // opening (their captures stop with showsHere), which then updates them
+  // instead of building every one of them again. Not while it's up on
+  // another display only (App Exposé shows on one): kept tiles here would
+  // follow every frame of its animations for nothing.
+  //
+  // rebuild() and rebuildDesktops() run from change handlers, some of them
+  // before the bindings that follow the same change (showsHere, mission,
+  // barSpace, the settings above), and a stale one would throw away tiles
+  // and thumbnails that should stay. So they read the service directly.
+  function stageHere() {
+    if (!service || !service.shown || !service.snap) return null
+    var shownOn = Model.monitorByName(service.snap, screenName)
+    return shownOn && (service.mode === "mission" || shownOn.focused) ? shownOn : null
+  }
+
   function rebuild() {
-    if (!showsHere || !snap || !monitor || width <= 0 || height <= 0) {
+    if (!service || !service.shown) return
+    // The service's own, rather than the bindings of the same names.
+    var snap = service.snap
+    var monitor = stageHere()
+    var settings = service.settings || {}
+    if (!monitor) {
       setModel("tileIds", [])
       setModel("tileData", {})
       setModel("groups", [])
@@ -159,6 +188,8 @@ PanelWindow {
       rebuildDesktops()
       return
     }
+    // Laid out once the window has its size (onWidthChanged).
+    if (width <= 0 || height <= 0) return
     var byAddress = {}
     snap.windows.forEach(function(w) { byAddress[w.address] = w })
     setModel("windowsByAddress", byAddress)
@@ -167,12 +198,14 @@ PanelWindow {
     rebuildDesktops()
 
     var expose = service.mode === "expose"
+    var mission = service.mode === "mission"
     var windows = expose ? Model.appWindows(snap, service.exposeClass) : Model.visibleWindows(snap, monitor)
     var minimized = expose && settings.showMinimized !== false ? Model.minimizedWindows(snap, service.exposeClass) : []
 
     var side = Math.round(Math.max(40, width * 0.045))
-    layoutBarSpace = barSpace
-    var top = expose ? 96 : barSpace + 26
+    var bar = mission ? spacesBar.reservedHeight : 0
+    layoutBarSpace = bar
+    var top = expose ? 96 : bar + 26
     var bottom = minimized.length ? Math.round(height * 0.2) + 40 : 64
     var area = { x: side, y: top, w: Math.max(100, width - side * 2), h: Math.max(100, height - top - bottom) }
 
@@ -183,8 +216,9 @@ PanelWindow {
     // Titles shown on every window hang below it, so rows leave them room:
     // WindowTile's 26px pill, under the app icon (at most 44px, half of it
     // below the edge) when icons are on.
-    var titleSpace = windowTitles === "always" ? (showIcons ? 22 + 6 : 10) + 26 : 0
-    var result = Layout.spread(items, area, { gap: Math.round(Math.max(20, width * 0.022)), maxScale: 0.84, groupByApp: grouped, labelSpace: 46, titleSpace: titleSpace })
+    var titleSpace = (settings.windowTitles || "hover") === "always" ? (settings.appIcons !== false ? 22 + 6 : 10) + 26 : 0
+    var result = Layout.spread(items, area, { gap: Math.round(Math.max(20, width * 0.022)), maxScale: 0.84,
+      groupByApp: mission && settings.groupByApp === true, labelSpace: 46, titleSpace: titleSpace })
 
     var minimizedArea = { x: side, y: height - Math.round(height * 0.2) - 24, w: width - side * 2, h: Math.round(height * 0.2) }
     var minimizedResult = minimized.length
@@ -264,17 +298,18 @@ PanelWindow {
   // bar and border only come from the capture while it is still there.
   property var ghostRects: ({})
 
+  function takeGhostRects() {
+    var rects = {}
+    for (var address in tileData) {
+      var info = tileData[address]
+      if (info.onScreen) rects[address] = info.from
+    }
+    ghostRects = rects
+  }
+
   Connections {
     target: win.service
-    function onRevealedChanged() {
-      if (!win.service.revealed) return
-      var rects = {}
-      for (var address in win.tileData) {
-        var info = win.tileData[address]
-        if (info.onScreen) rects[address] = info.from
-      }
-      win.ghostRects = rects
-    }
+    function onRevealedChanged() { if (win.service.revealed) win.takeGhostRects() }
   }
 
   // Counts tiles coming and going, so a binding that looks a tile up

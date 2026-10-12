@@ -39,8 +39,10 @@ Item {
   // The window's title, live: Hyprland's toplevel follows every retitle on
   // its own, so a new title needn't read all of Hyprland's state again. As
   // in a read of Hyprland's state, a window without a title shows its first.
-  readonly property string title: handle ? (handle.title || (info ? info.initialTitle : ""))
-    : (info ? info.title : "")
+  // Only while the stage shows: a kept tile (Overview.rebuild()) needn't
+  // lay out every new title of a busy terminal while the stage is closed.
+  readonly property string title: overview && overview.showsHere && handle
+    ? (handle.title || (info ? info.initialTitle : "")) : (info ? info.title : "")
 
   function lerp(a, b, t) { return a + (b - a) * t }
   function smooth(edge0, edge1, x) {
@@ -103,6 +105,19 @@ Item {
     }
   }
 
+  // Tiles outlive a closed stage (Overview.rebuild()): the next opening
+  // starts them afresh.
+  Connections {
+    target: tile.overview
+    function onShowsHereChanged() {
+      if (tile.overview.showsHere) return
+      dropAnimation.stop()
+      tile.dropping = false
+      closeTimeout.stop()
+      tile.closingOut = false
+    }
+  }
+
   x: dropping ? lerp(dropFrom.x, dropTo.x, dropT)
     : dragging ? overview.dragPoint.x - overview.dragGrab.x * tw * dragScale
     : lerp(from.x, tx, e)
@@ -152,6 +167,17 @@ Item {
     visible: !!sourceItem && opacity > 0.01 && (d.border + d.bar) > 0
     live: false
     hideSource: false
+    // A tile outlives the overlay's window (Overview.rebuild()), but a copy
+    // that isn't live is taken once per ShaderEffectSource. Take it again
+    // when the source comes back for a new opening, and when the new screen
+    // capture is in.
+    onSourceItemChanged: if (sourceItem) scheduleUpdate()
+    Connections {
+      target: tile.overview ? tile.overview.screenCapture : null
+      function onHasContentChanged() {
+        if (decoration.sourceItem && tile.overview.screenCapture.hasContent) decoration.scheduleUpdate()
+      }
+    }
   }
 
   // The live preview is rendered at the window's size times the first power

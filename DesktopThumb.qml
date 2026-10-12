@@ -64,6 +64,12 @@ Item {
   readonly property bool wantsPreviews: !!overview && overview.showsHere && overview.mission
     && (ex > 0.01 || (!!strip && strip.previewRank(modelData) < strip.previewTurns))
   onWantsPreviewsChanged: if (wantsPreviews) previews = true
+  // Thumbnails outlive a closed stage (Overview.rebuild()); their previews
+  // don't, so the next opening captures the windows as they are then.
+  Connections {
+    target: thumb.overview
+    function onShowsHereChanged() { if (!thumb.overview.showsHere) thumb.previews = false }
+  }
   Component.onCompleted: {
     if (wantsPreviews) previews = true
     if (strip) strip.registerThumb(modelData, thumb)
