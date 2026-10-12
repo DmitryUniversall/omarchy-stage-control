@@ -199,10 +199,11 @@ does).
 Stage Control runs as unsandboxed code in the Omarchy shell, like every shell
 plugin, so here is exactly what it does.
 
-**No network, no root, nothing compiled on your machine.** The Liquid Glass
-shader ships as source (`shaders/glass.frag`) next to the `.qsb` file Qt loads;
-`shaders/build` rebuilds it with Qt's `qsb`, and with qsb 6.11 the result is
-byte for byte the committed file.
+**No network, no root, nothing compiled on your machine.** The two shaders,
+Liquid Glass and the rounded window previews, ship as source
+(`shaders/glass.frag`, `shaders/rounded.frag`) next to the `.qsb` files Qt
+loads; `shaders/build` rebuilds them with Qt's `qsb`, and with qsb 6.11 the
+result is byte for byte the committed files.
 
 **Programs.** Every command runs by absolute path with an argument list, never
 through a shell or `PATH`:
@@ -267,7 +268,7 @@ Stage Control takes its gesture, shortcuts and rules back out of Hyprland.
 
 ```bash
 tests/run          # layout, desktop plans, settings, and the Hyprland module (needs node and lua)
-shaders/build      # recompile the glass shader (needs qt6-shadertools)
+shaders/build      # recompile the shaders (needs qt6-shadertools)
 ```
 
 The Omarchy shell caches plugin QML, so after changing QML run

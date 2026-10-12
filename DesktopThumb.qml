@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Effects
 import Quickshell
 import Quickshell.Wayland
-import Quickshell.Widgets
 import Quickshell.Hyprland
 
 // One desktop in the Spaces bar. Collapsed it is just its name; expanded it
@@ -47,9 +46,27 @@ Item {
     strip.endRename(modelData, text === defaultLabel ? "" : text)
   }
 
-  readonly property real pillWidth: (renaming ? Math.max(64, nameInput.implicitWidth + 4) : labelText.implicitWidth) + 26
-  width: Math.round(pillWidth + (Math.max(strip ? strip.thumbW : 0, pillWidth) - pillWidth) * ex)
+  // The name pill takes the name's width, but collapsed no more than the
+  // desktop's share of the bar and expanded no more than its thumbnail: a long
+  // name is cut short rather than pushing desktops off the screen.
+  readonly property real nameWidth: Math.ceil(renaming ? Math.max(64, nameInput.implicitWidth + 4) : labelText.implicitWidth) + 26
+  readonly property real thumbWidth: strip ? strip.thumbW : 0
+  readonly property real collapsedWidth: Math.min(nameWidth, strip ? strip.collapsedSlot : nameWidth)
+  readonly property real pillWidth: Math.round(collapsedWidth + (Math.min(nameWidth, thumbWidth) - collapsedWidth) * ex)
+  width: Math.round(collapsedWidth + (thumbWidth - collapsedWidth) * ex)
   height: strip ? strip.thumbH + 10 + strip.labelH : 0
+
+  // The windows' previews are made once per opening and kept: the first time
+  // the thumbnail shows, or as soon as the stage has finished opening, so the
+  // bar opens without first starting a capture of every window again.
+  property bool previews: false
+  readonly property bool wantsPreviews: !!overview && overview.showsHere
+    && (ex > 0.01 || (!!service && service.progress >= 1 && !service.tracking))
+  onWantsPreviewsChanged: if (wantsPreviews) previews = true
+  Component.onCompleted: {
+    if (wantsPreviews) previews = true
+    if (strip) strip.registerThumb(modelData, thumb)
+  }
 
   // Where the thumbnail is, in the overview's coordinates (for drops).
   function pictureRect() {
@@ -83,7 +100,7 @@ Item {
       color: Qt.rgba(0, 0, 0, 0.45)
     }
 
-    ClippingRectangle {
+    Rounded {
       id: screenPicture
       anchors.fill: parent
       radius: 9
@@ -101,7 +118,7 @@ Item {
 
       // The desktop's windows, where they are on the display.
       Repeater {
-        model: ScriptModel { values: thumb.info && thumb.ex > 0.01 ? thumb.info.windows : [] }
+        model: ScriptModel { values: thumb.info && thumb.previews ? thumb.info.windows : [] }
         delegate: Item {
           id: mini
           required property var modelData
@@ -128,8 +145,9 @@ Item {
           ScreencopyView {
             anchors.fill: parent
             captureSource: thumb.overview && thumb.overview.showsHere && mini.handle ? mini.handle.wayland : null
-            // The desktop on screen is live; the others hold the frame they had.
-            live: thumb.active
+            // The desktop on screen is live while you can see it; the others
+            // hold the frame they had.
+            live: thumb.active && thumb.ex > 0.01
           }
         }
       }
@@ -200,7 +218,7 @@ Item {
     radius: height / 2
     style: thumb.overview ? thumb.overview.glassStyle : "liquid"
     backdrop: thumb.overview ? thumb.overview.glassBackdrop : null
-    backdropSpace: thumb.overview ? thumb.overview.stage : null
+    backdropIsWindow: true
     shadow: thumb.ex < 0.5
     hovered: thumb.hovered && !thumb.active
     selected: thumb.active
@@ -212,9 +230,12 @@ Item {
     Text {
       id: labelText
       anchors.centerIn: parent
+      width: Math.max(0, thumb.pillWidth - 26)
       visible: !thumb.renaming
       text: thumb.label
       textFormat: Text.PlainText
+      elide: Text.ElideRight
+      horizontalAlignment: Text.AlignHCenter
       color: Qt.rgba(1, 1, 1, thumb.active ? 1 : 0.78)
       font.family: thumb.overview ? thumb.overview.uiFont : ""
       font.pixelSize: 12
@@ -226,7 +247,7 @@ Item {
     TextInput {
       id: nameInput
       anchors.centerIn: parent
-      width: thumb.pillWidth - 26
+      width: Math.max(0, thumb.pillWidth - 26)
       visible: thumb.renaming
       enabled: thumb.renaming
       horizontalAlignment: TextInput.AlignHCenter
@@ -289,7 +310,6 @@ Item {
     onCanceled: if (thumb.strip.draggingDesktop === thumb.modelData) thumb.strip.cancelDesktopDrag()
   }
 
-  Component.onCompleted: if (strip) strip.registerThumb(modelData, thumb)
   Component.onDestruction: {
     if (!strip) return
     strip.unregisterThumb(modelData, thumb)

@@ -19,8 +19,12 @@ Item {
   readonly property real e: settings.reduceMotion ? 1 : p
   readonly property int count: overview ? overview.desktopIds.length : 0
 
-  readonly property real thumbW: Math.round(Math.max(112, Math.min(236, (overview ? overview.width : 1280) * 0.118)))
-  readonly property real thumbH: Math.round(thumbW * (monitor ? monitor.h / Math.max(1, monitor.w) : 0.625))
+  // Sized so every desktop and the "+" fit on the screen (Layout.spacesBar).
+  readonly property var metrics: Layout.spacesBar(width, count, monitor ? monitor.h / Math.max(1, monitor.w) : 0.625)
+  readonly property real thumbW: metrics.thumbW
+  readonly property real thumbH: metrics.thumbH
+  // The most a desktop's name may take while the bar is collapsed.
+  readonly property real collapsedSlot: metrics.collapsedSlot
   readonly property real labelH: 24
   readonly property real inset: 14
   readonly property real collapsedHeight: inset + labelH + 16
@@ -37,9 +41,10 @@ Item {
 
   width: overview ? overview.width : 0
   height: collapsedHeight + (expandedHeight - collapsedHeight) * expand
-  // Slides down from the top edge as the stage opens.
+  // Slides down from the top edge as the stage opens. Drawn while the stage
+  // prepares, so its glass is ready by the first frame (Overview.preparing).
   y: -Math.round(height * 0.7 * (1 - e))
-  opacity: e
+  opacity: overview && overview.preparing ? 0.5 : e
 
   HoverHandler {
     id: hover
@@ -55,11 +60,12 @@ Item {
 
   Row {
     id: row
-    anchors.horizontalCenter: parent.horizontalCenter
-    // Keep clear of the "+" on the right when there are many desktops.
-    anchors.horizontalCenterOffset: -Math.max(0, (width + addButton.width + 48) - bar.width) / 2
+    // Centered, but clear of the screen's edges and, as the bar opens, of
+    // the "+" on the right.
+    x: Math.round(Math.max(bar.metrics.margin, Math.min((bar.width - width) / 2,
+      bar.width - bar.metrics.margin - (addButton.width + bar.metrics.addGap) * bar.expand - width)))
     y: bar.inset
-    spacing: Math.round(12 + 14 * bar.expand)
+    spacing: Math.round(bar.metrics.collapsedSpacing + (bar.metrics.spacing - bar.metrics.collapsedSpacing) * bar.expand)
 
     Repeater {
       model: ScriptModel { values: bar.overview ? bar.overview.desktopIds : [] }
@@ -145,14 +151,14 @@ Item {
   Glass {
     id: addButton
     readonly property bool dropTarget: !!bar.overview && !!bar.overview.dropTarget && bar.overview.dropTarget.kind === "new"
-    width: Math.round(Math.max(40, bar.thumbH * 0.62))
+    width: bar.metrics.add
     height: width
     radius: 12
-    x: bar.width - width - 28
+    x: bar.width - width - bar.metrics.margin
     y: bar.inset + Math.round((bar.thumbH - height) / 2)
     style: bar.overview ? bar.overview.glassStyle : "liquid"
     backdrop: bar.overview ? bar.overview.glassBackdrop : null
-    backdropSpace: bar.overview ? bar.overview.stage : null
+    backdropIsWindow: true
     hovered: addMouse.containsMouse
     selected: dropTarget
     selectedColor: bar.overview ? bar.overview.highlight : "#0a84ff"

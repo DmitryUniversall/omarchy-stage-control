@@ -28,6 +28,15 @@ PanelWindow {
   readonly property bool reduceMotion: settings.reduceMotion === true
   readonly property real e: reduceMotion ? 1 : p
   readonly property bool mission: !!service && service.mode === "mission"
+  // Open, and not moving: not opening or closing, nor following the fingers.
+  readonly property bool settled: !!service && service.revealed && !service.tracking && !service.closing && p >= 1
+  // Up, but waiting for the previews before it shows. Meanwhile the stage is
+  // drawn at 1/250 opacity: invisible, since at progress 0 it matches the
+  // screen under it, but its layers and textures, the wallpaper's blur and
+  // the glass get made now instead of all on the first frame you see. What
+  // would be transparent at progress 0 is drawn at half opacity until then,
+  // enough for Qt to draw it at all (it skips anything below 1/1000).
+  readonly property bool preparing: !!service && service.shown && !service.revealed
 
   readonly property string glassStyle: settings.glass || "liquid"
   readonly property string windowTitles: settings.windowTitles || "hover"
@@ -83,7 +92,9 @@ PanelWindow {
   }
 
   readonly property real barSpace: mission ? spacesBar.reservedHeight : 0
-  onBarSpaceChanged: rebuild()
+  // The bar's size follows the number of desktops, which rebuild() itself
+  // sets, so lay out again after the change rather than inside it.
+  onBarSpaceChanged: Qt.callLater(rebuild)
   onWidthChanged: rebuild()
   onHeightChanged: rebuild()
   onShowsHereChanged: {
@@ -112,7 +123,11 @@ PanelWindow {
     var list = service.desktopsFor(screenName)
     var data = {}
     list.forEach(function(desktop) { data[desktop.id] = desktop })
-    desktopIds = list.map(function(desktop) { return desktop.id })
+    // The Spaces bar's size follows the number of desktops, and the windows'
+    // layout follows the bar's: hand it a new list only when the desktops
+    // changed, so a layout pass can't set off another.
+    var ids = list.map(function(desktop) { return desktop.id })
+    if (ids.join(",") !== desktopIds.join(",")) desktopIds = ids
     desktopData = data
   }
 
@@ -129,6 +144,9 @@ PanelWindow {
     var byAddress = {}
     snap.windows.forEach(function(w) { byAddress[w.address] = w })
     windowsByAddress = byAddress
+    // Desktops first: the Spaces bar, which the windows leave room for, is
+    // sized by how many there are.
+    rebuildDesktops()
 
     var expose = service.mode === "expose"
     var windows = expose ? Model.appWindows(snap, service.exposeClass) : Model.visibleWindows(snap, monitor)
@@ -167,8 +185,8 @@ PanelWindow {
       var app = service.appFor(w.cls)
       data[w.address] = {
         address: w.address, title: w.title, cls: w.cls, icon: app.icon, appName: app.name,
-        from: from, to: to, onScreen: onScreen, minimized: false, workspace: w.workspace,
-        z: (w.floating ? 200 : 0) + (windows.length - index)
+        from: from, to: to, size: { w: w.w, h: w.h }, onScreen: onScreen, minimized: false,
+        workspace: w.workspace, z: (w.floating ? 200 : 0) + (windows.length - index)
       }
       ids.push(w.address)
       rects[w.address] = to
@@ -180,8 +198,8 @@ PanelWindow {
       var app = service.appFor(w.cls)
       data[w.address] = {
         address: w.address, title: w.title, cls: w.cls, icon: app.icon, appName: app.name,
-        from: { x: to.x, y: to.y + 60, w: to.w, h: to.h }, to: to, onScreen: false, minimized: true,
-        workspace: w.workspace, z: 0
+        from: { x: to.x, y: to.y + 60, w: to.w, h: to.h }, to: to, size: { w: w.w, h: w.h },
+        onScreen: false, minimized: true, workspace: w.workspace, z: 0
       }
       ids.push(w.address)
       minIds.push(w.address)
@@ -217,7 +235,6 @@ PanelWindow {
     minimizedIds = minIds
     if (selectedAddress && !data[selectedAddress]) selectedAddress = ""
     if (hoverAddress && !data[hoverAddress]) hoverAddress = ""
-    rebuildDesktops()
   }
 
   // ---- tiles ------------------------------------------------------------------------
@@ -393,13 +410,18 @@ PanelWindow {
   Item {
     id: stage
     anchors.fill: parent
-    // Nothing shows until the previews are ready; then it matches the screen.
-    opacity: win.service && win.service.revealed ? (win.reduceMotion ? win.p : 1) : 0
+    // Nothing shows until the previews are ready (see `preparing`); then it
+    // matches the screen.
+    opacity: !win.service ? 0 : win.service.revealed ? (win.reduceMotion ? win.p : 1) : 0.004
 
     // The wallpaper, blurring and dimming as the stage opens.
     Item {
       id: backdrop
       anchors.fill: parent
+      // The live previews redraw the open stage many times a second. Once it
+      // has settled, the wallpaper, its blur and the dim are one cached
+      // picture, so each redraw starts with one full-screen pass, not three.
+      layer.enabled: win.settled
 
       // Loaded the way Omarchy's own background loads the same file: off the
       // shell's main thread (so a slow or never-ending file can't stall the
@@ -418,12 +440,17 @@ PanelWindow {
         anchors.fill: parent
         source: wallpaper
         visible: win.settings.background !== "dim" && opacity > 0.01
-        opacity: win.smooth(0, 0.6, win.e)
+        opacity: win.preparing ? 0.5 : win.smooth(0, 0.6, win.e)
         blurEnabled: true
         blurMax: 64
         blur: 1.0
         saturation: 0.25
         autoPaddingEnabled: false
+        // The blur itself never changes, only how much of it shows: render it
+        // once, at half the size (it's a blur), and fade that.
+        layer.enabled: true
+        layer.smooth: true
+        layer.textureSize: Qt.size(Math.max(1, Math.round(width / 2)), Math.max(1, Math.round(height / 2)))
       }
 
       Rectangle {
@@ -434,12 +461,14 @@ PanelWindow {
     }
 
     // The backdrop as one texture, for the Liquid Glass panes to refract.
-    // Half resolution with mipmaps: the panes read it frosted anyway.
+    // Half resolution with mipmaps: the panes read it frosted anyway. Taken
+    // once the stage has settled and kept while it opens and closes (the
+    // panes fade in and out then), instead of on every frame of the way.
     ShaderEffectSource {
       id: glassBackdrop
       sourceItem: backdrop
       textureSize: Qt.size(Math.max(1, Math.round(win.width / 2)), Math.max(1, Math.round(win.height / 2)))
-      live: true
+      live: win.settled
       mipmap: true
       hideSource: false
       visible: false
@@ -478,16 +507,16 @@ PanelWindow {
         y: modelData.edge === "bottom" ? win.height - modelData.size + slide : modelData.edge === "top" ? -slide : 0
         width: horizontal ? win.width : modelData.size
         height: horizontal ? modelData.size : win.height
-        clip: true
         opacity: 1 - screenGhost.fade
         visible: opacity > 0.01 && screenGhost.hasContent
 
+        // Just this edge of the capture, not a copy of the whole screen.
         ShaderEffectSource {
+          anchors.fill: parent
           sourceItem: screenGhost
-          x: -(strip.modelData.edge === "right" ? win.width - strip.modelData.size : 0)
-          y: -(strip.modelData.edge === "bottom" ? win.height - strip.modelData.size : 0)
-          width: win.width
-          height: win.height
+          sourceRect: Qt.rect(strip.modelData.edge === "right" ? win.width - strip.modelData.size : 0,
+                              strip.modelData.edge === "bottom" ? win.height - strip.modelData.size : 0,
+                              strip.width, strip.height)
           live: false
           hideSource: false
         }

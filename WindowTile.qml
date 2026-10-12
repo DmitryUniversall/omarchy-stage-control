@@ -146,11 +146,23 @@ Item {
     hideSource: false
   }
 
-  ClippingRectangle {
+  // The live preview is rendered at the window's size times the first power
+  // of 0.8 at or above the tile's scale: never below the size it shows at,
+  // never far above it, and while the tile travels it's rendered at a new size
+  // a few times instead of on every frame.
+  readonly property real renderScale: {
+    var s = info ? width / Math.max(1, info.size.w) : 1
+    if (!(s < 1)) return 1
+    return Math.max(0.2, Math.pow(0.8, Math.floor(Math.log(s) / Math.log(0.8))))
+  }
+
+  Rounded {
     id: frame
     anchors.fill: parent
     radius: tile.cornerRadius
     color: Qt.rgba(0.11, 0.11, 0.13, 1)
+    contentWidth: tile.info ? tile.info.size.w * tile.renderScale : width
+    contentHeight: tile.info ? tile.info.size.h * tile.renderScale : height
 
     ScreencopyView {
       id: capture
@@ -201,7 +213,7 @@ Item {
     radius: 13
     style: tile.overview ? tile.overview.glassStyle : "liquid"
     backdrop: tile.overview ? tile.overview.glassBackdrop : null
-    backdropSpace: tile.overview ? tile.overview.stage : null
+    backdropIsWindow: true
     opacity: wanted ? tile.smooth(0.7, 1, tile.p) : 0
     visible: opacity > 0.01
     Behavior on opacity { NumberAnimation { duration: 150 } }

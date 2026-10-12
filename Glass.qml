@@ -1,9 +1,10 @@
 import QtQuick
 import QtQuick.Effects
 
-// A Liquid Glass pane. Given the layer behind it (`backdrop`, a texture that
-// covers `backdropSpace`), it refracts that layer: frosted, bent inward at the
-// rim like a thick lens, with a specular rim lit from the top left
+// A Liquid Glass pane. Given the layer behind it (`backdrop`: a texture of
+// the whole window with `backdropIsWindow`, else one that covers
+// `backdropSpace`), it refracts that layer: frosted, bent inward at the rim
+// like a thick lens, with a specular rim lit from the top left
 // (shaders/glass.frag). Without a backdrop, with the "solid" style, or if the
 // shader can't load, it draws a flat translucent pane with the same rim.
 // Content goes inside, as children.
@@ -27,8 +28,13 @@ Item {
   property real outlineWidth: 0
   property Item backdrop: null
   property Item backdropSpace: null
+  // The backdrop covers the whole window (the stage's does). The shader then
+  // finds the pane in it from the pane's own transform, so nothing has to
+  // follow the pane around on every frame.
+  property bool backdropIsWindow: false
 
-  readonly property bool refracting: style !== "solid" && !!backdrop && !!backdropSpace && lens.status !== ShaderEffect.Error
+  readonly property bool refracting: style !== "solid" && !!backdrop && (backdropIsWindow || !!backdropSpace)
+    && lens.status !== ShaderEffect.Error
 
   default property alias content: inner.data
 
@@ -55,6 +61,7 @@ Item {
     property real frost: glass.style === "liquid" ? 1.6 : 3.2
     property real rim: glass.style === "liquid" ? 1.0 : 0.7
     property real flip: 0
+    property real windowSpace: glass.backdropIsWindow ? 1 : 0
     property vector4d area: Qt.vector4d(0, 0, 1, 1)
     property vector4d tint: glass.dark
       ? Qt.vector4d(0.05, 0.05, 0.07, glass.style === "liquid" ? 0.32 : 0.46)
@@ -67,10 +74,10 @@ Item {
     fragmentShader: Qt.resolvedUrl("shaders/glass.frag.qsb")
   }
 
-  // Where the pane sits over the backdrop, followed every frame while it
-  // shows (panes ride on animated parents).
+  // Where the pane sits over a backdrop that isn't the whole window,
+  // followed every frame while it shows (panes ride on animated parents).
   FrameAnimation {
-    running: glass.refracting && glass.visible && glass.opacity > 0
+    running: glass.refracting && !glass.backdropIsWindow && glass.visible && glass.opacity > 0
     onTriggered: glass.updateArea()
   }
 

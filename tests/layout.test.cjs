@@ -158,6 +158,35 @@ passed++;
   passed++;
 }
 
+// The Spaces bar fits every desktop and the "+" on the screen, however many
+// desktops there are (ten on a 1800-pixel laptop once pushed the first three
+// off the left edge), and keeps its macOS size when there's room.
+{
+  for (const width of [1024, 1280, 1366, 1440, 1512, 1800, 1920, 2560, 3440, 3840]) {
+    for (const aspect of [0.5625, 0.625, 2 / 3, 0.75, 0.4]) {
+      for (let count = 1; count <= 20; count++) {
+        const m = plain(Layout.spacesBar(width, count, aspect));
+        const label = `spaces bar ${width}px, ${count} desktops, aspect ${aspect.toFixed(3)}`;
+        const expanded = count * m.thumbW + (count - 1) * m.spacing + m.addGap + m.add + 2 * m.margin;
+        assert.ok(expanded <= width, `${label}: thumbnails and the "+" fit (${expanded} > ${width})`);
+        const collapsed = count * m.collapsedSlot + (count - 1) * m.collapsedSpacing + 2 * m.margin;
+        assert.ok(collapsed <= width, `${label}: names fit`);
+        assert.equal(m.thumbH, Math.round(m.thumbW * aspect), `${label}: thumbnails keep the display's shape`);
+        assert.ok(m.thumbW <= 236, `${label}: never larger than macOS's`);
+      }
+    }
+  }
+  // Room to spare: the same size as always.
+  assert.equal(Layout.spacesBar(1920, 3, 0.5625).thumbW, Math.floor(1920 * 0.118));
+  assert.equal(Layout.spacesBar(3840, 4, 0.5625).thumbW, 236);
+  // The laptop that showed the bug: ten desktops on 1800 x 1200.
+  const laptop = plain(Layout.spacesBar(1800, 10, 1200 / 1800));
+  assert.ok(laptop.thumbW >= 120, "laptop: ten desktops still get usable thumbnails");
+  // Many desktops: the gaps narrow before the thumbnails get tiny.
+  assert.equal(Layout.spacesBar(1280, 16, 0.625).spacing, 12);
+  passed++;
+}
+
 // A desktop dragged along the Spaces bar lands on the slot nearest its center:
 // no dead gaps between desktops, and the ends catch anything past them.
 {

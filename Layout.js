@@ -222,6 +222,44 @@ function spread(windows, area, options) {
   return result
 }
 
+// The Spaces bar's measurements: a bar `width` wide with `count` desktops, for
+// a display `aspect` (height / width) tall. Thumbnails are as large as macOS
+// makes them, but shrink until every desktop and the "+" (0.62 of a
+// thumbnail's height, at least 40) fit between the margins, and with many
+// desktops the gaps narrow too. Expanded, a desktop is as wide as its
+// thumbnail; collapsed, at most its share of the bar. So a long name is cut
+// short instead of pushing desktops off the screen.
+var BAR_MARGIN = 28    // from each edge of the screen
+var BAR_ADD_GAP = 20   // between the last desktop and the "+"
+
+function spacesBar(width, count, aspect) {
+  var n = Math.max(1, Math.floor(count) || 1)
+  var ratio = aspect > 0 ? aspect : 0.625
+  var ideal = Math.max(112, Math.min(236, width * 0.118))
+  var addShare = 0.62 * ratio
+  // The widest thumbnail that fits: n of them, the gaps, and the "+" (which
+  // grows with them, from 40), with two pixels to spare for rounding.
+  function fit(spacing) {
+    var room = width - 2 * BAR_MARGIN - BAR_ADD_GAP - spacing * (n - 1) - 2
+    return Math.min(room / (n + addShare), (room - 40) / n)
+  }
+  var spacing = 26
+  if (fit(spacing) < 100) spacing = 12
+  var thumbW = Math.floor(Math.max(24, Math.min(ideal, fit(spacing))))
+  var thumbH = Math.round(thumbW * ratio)
+  var collapsedSpacing = 12
+  return {
+    thumbW: thumbW,
+    thumbH: thumbH,
+    add: Math.round(Math.max(40, thumbH * 0.62)),
+    spacing: spacing,
+    collapsedSpacing: collapsedSpacing,
+    collapsedSlot: Math.max(24, Math.floor((width - 2 * BAR_MARGIN - collapsedSpacing * (n - 1)) / n)),
+    margin: BAR_MARGIN,
+    addGap: BAR_ADD_GAP
+  }
+}
+
 // The slot ({ id, center }) whose center lies nearest `x`: where a desktop
 // dragged along the Spaces bar lands. There are no dead gaps between desktops,
 // and past either end it is that end's slot. null for no slots.

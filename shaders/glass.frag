@@ -22,7 +22,8 @@ layout(std140, binding = 0) uniform buf {
     float frost;        // mip level to read the backdrop at (0 = clear)
     float rim;          // specular strength, 0..1
     float flip;         // 1 when the backdrop texture is stored bottom-up
-    vec4 area;          // the pane's rect within the backdrop, 0..1 (x, y, w, h)
+    float windowSpace;  // 1 when the backdrop covers the whole window
+    vec4 area;          // otherwise, the pane's rect within the backdrop, 0..1 (x, y, w, h)
     vec4 tint;          // straight-alpha color laid over the glass
     vec4 fill;          // straight-alpha color for hover and selection
 };
@@ -35,7 +36,19 @@ float roundBox(vec2 p, vec2 half_size, float r) {
 }
 
 vec2 backdropUv(vec2 local) {
-    vec2 uv = area.xy + local * area.zw;
+    vec2 uv;
+    if (windowSpace > 0.5) {
+        // Where this point of the pane lands in the window, from the pane's
+        // own transform: qt_Matrix takes it to normalized device coordinates.
+        // Their y points up on OpenGL and down on Vulkan; the item's y points
+        // down, so the sign the matrix gives it says which.
+        vec4 clip = qt_Matrix * vec4(local * itemSize, 0.0, 1.0);
+        vec2 ndc = clip.xy / clip.w;
+        float down = qt_Matrix[1][1] > 0.0 ? 1.0 : -1.0;
+        uv = vec2(0.5 + 0.5 * ndc.x, 0.5 + 0.5 * ndc.y * down);
+    } else {
+        uv = area.xy + local * area.zw;
+    }
     if (flip > 0.5) uv.y = 1.0 - uv.y;
     return uv;
 }
