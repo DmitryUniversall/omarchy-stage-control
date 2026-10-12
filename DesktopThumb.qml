@@ -57,11 +57,12 @@ Item {
   height: strip ? strip.thumbH + 10 + strip.labelH : 0
 
   // The windows' previews are made once per opening and kept: the first time
-  // the thumbnail shows, or as soon as the stage has finished opening, so the
-  // bar opens without first starting a capture of every window again.
+  // the thumbnail shows, or when the stage has finished opening and it's
+  // this desktop's turn (SpacesBar.previewTurns), so the bar opens without
+  // first starting a capture of every window again.
   property bool previews: false
   readonly property bool wantsPreviews: !!overview && overview.showsHere && overview.mission
-    && (ex > 0.01 || (!!service && service.progress >= 1 && !service.tracking))
+    && (ex > 0.01 || (!!strip && strip.previewRank(modelData) < strip.previewTurns))
   onWantsPreviewsChanged: if (wantsPreviews) previews = true
   Component.onCompleted: {
     if (wantsPreviews) previews = true

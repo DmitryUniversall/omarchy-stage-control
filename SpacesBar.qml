@@ -73,6 +73,44 @@ Item {
     }
   }
 
+  // ---- previews -----------------------------------------------------------------
+  //
+  // Each desktop's thumbnail starts a capture of every window on it. Once the
+  // stage has opened they start one desktop a frame, the one on screen first
+  // and then outward, rather than all on the frame the stage settles.
+  // Pointing at the bar starts any that are left at once.
+
+  readonly property var previewOrder: {
+    var ids = overview ? overview.desktopIds : []
+    var at = Math.max(0, ids.indexOf(monitor ? monitor.activeWorkspace : 0))
+    var order = []
+    for (var k = 0; order.length < ids.length; k++) {
+      if (at + k < ids.length) order.push(ids[at + k])
+      if (k > 0 && at - k >= 0) order.push(ids[at - k])
+    }
+    return order
+  }
+  property int previewTurns: 0
+
+  function previewRank(id) {
+    var rank = previewOrder.indexOf(id)
+    return rank < 0 ? count : rank
+  }
+
+  // Only for this display's own stage: `settled` is the service's, so it's
+  // also true while App Exposé is open on another display.
+  FrameAnimation {
+    running: !!bar.overview && bar.overview.showsHere && bar.overview.mission && bar.overview.settled
+      && bar.previewTurns < bar.count
+    onTriggered: bar.previewTurns++
+  }
+
+  Connections {
+    target: bar.overview
+    function onShowsHereChanged() { if (!bar.overview.showsHere) bar.previewTurns = 0 }
+    function onMissionChanged() { if (!bar.overview.mission) bar.previewTurns = 0 }
+  }
+
   // ---- reordering desktops ------------------------------------------------------
 
   property int draggingDesktop: 0
