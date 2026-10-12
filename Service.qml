@@ -229,15 +229,42 @@ Item {
   property var laterWaiters: []
   property bool snapPending: false
 
+  // Reads are numbered as they start.
+  property int readsStarted: 0
+  property int runningRead: 0         // the read under way, 0 for none
+  property int lastGoodRead: 0        // the latest read that succeeded
+
   // A callback is answered by a read that starts after the call, never by one
-  // already under way, which may predate what the caller just changed.
-  function refresh(callback) {
+  // already under way, which may predate what the caller just changed. With
+  // `since`, any read numbered `since` or later will do, also one under way
+  // or one that already finished: a swipe's stage uses the read its fingers
+  // started on touching down. Returns whether a new read started.
+  function refresh(callback, since) {
+    var hasCallback = typeof callback === "function"
+    if (hasCallback && since > 0) {
+      if (lastGoodRead >= since) {
+        // Still answered after the caller returns, as a read would be.
+        Qt.callLater(callback, true)
+        return false
+      }
+      if (runningRead >= since) {
+        // If that read fails, a new one answers, as it would have before.
+        snapWaiters = snapWaiters.concat([function(ok) {
+          if (ok) callback(true)
+          else root.refresh(callback)
+        }])
+        return false
+      }
+    }
     var started = snapRun.start(["/usr/bin/hyprctl", "-j", "--batch",
       "clients; monitors; workspaces; layers; getoption general:border_size; getoption plugin:hyprbars:bar_height; getoption decoration:rounding"])
-    if (!started) snapPending = true
-    if (typeof callback !== "function") return
-    if (started) snapWaiters = snapWaiters.concat([callback])
-    else laterWaiters = laterWaiters.concat([callback])
+    if (started) runningRead = ++readsStarted
+    else snapPending = true
+    if (hasCallback) {
+      if (started) snapWaiters = snapWaiters.concat([callback])
+      else laterWaiters = laterWaiters.concat([callback])
+    }
+    return started
   }
 
   Run {
@@ -245,6 +272,8 @@ Item {
     maxBytes: 1024 * 1024
     timeoutMs: 3000
     onFinished: function(ok, output) {
+      var read = root.runningRead
+      root.runningRead = 0
       var good = false
       if (ok) {
         try {
@@ -255,6 +284,7 @@ Item {
             root.decor = Model.decorFrom(rest)
             root.snap = Model.snapshot(parts[0], parts[1], parts[2])
             root.snapVersion++
+            root.lastGoodRead = read
             good = true
           }
         } catch (e) {
@@ -657,7 +687,7 @@ Item {
       root.revealed = false
       if (!byGesture) root.progress = 0
       revealTimer.restart()
-    })
+    }, byGesture ? swipeRead : 0)
   }
 
   // Overlays call this once their previews have content.
@@ -761,6 +791,7 @@ Item {
   property int swipeDirection: 0      // sign of a swipe toward "open": -1 up (the stage), +1 down (App Exposé)
   property real swipeOrigin: 0        // progress when the fingers took over
   property var swipeSamples: []
+  property int swipeRead: 0           // the read the fingers started on touching down
   property string lastGestureKey: ""
 
   function handleEvent(event) {
@@ -786,7 +817,7 @@ Item {
     swipeIntent = ""
     swipeSamples = []
     // Read Hyprland now so the overlay is ready by the time the fingers commit.
-    if (!shown) refresh(null)
+    swipeRead = !shown && refresh(null) ? runningRead : 0
     gestureUpdate(event)
   }
 
