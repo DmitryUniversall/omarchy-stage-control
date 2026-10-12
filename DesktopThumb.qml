@@ -60,7 +60,7 @@ Item {
   // the thumbnail shows, or as soon as the stage has finished opening, so the
   // bar opens without first starting a capture of every window again.
   property bool previews: false
-  readonly property bool wantsPreviews: !!overview && overview.showsHere
+  readonly property bool wantsPreviews: !!overview && overview.showsHere && overview.mission
     && (ex > 0.01 || (!!service && service.progress >= 1 && !service.tracking))
   onWantsPreviewsChanged: if (wantsPreviews) previews = true
   Component.onCompleted: {

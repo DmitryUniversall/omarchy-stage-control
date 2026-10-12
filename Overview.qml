@@ -114,8 +114,10 @@ PanelWindow {
     function onSettingsChanged() { win.rebuild() }
   }
 
+  // Only the stage has a Spaces bar. App Exposé hides it, so it keeps no
+  // desktops (and their thumbnails capture no windows).
   function rebuildDesktops() {
-    if (!showsHere || !service) {
+    if (!showsHere || !service || !mission) {
       desktopIds = []
       desktopData = ({})
       return
