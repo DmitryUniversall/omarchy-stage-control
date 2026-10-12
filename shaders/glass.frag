@@ -8,6 +8,7 @@
 //
 // Build: shaders/build (Qt's qsb). The .qsb next to this file is what loads.
 #version 440
+#extension GL_GOOGLE_include_directive : require
 
 layout(location = 0) in vec2 qt_TexCoord0;
 layout(location = 0) out vec4 fragColor;
@@ -30,10 +31,7 @@ layout(std140, binding = 0) uniform buf {
 
 layout(binding = 1) uniform sampler2D backdrop;
 
-float roundBox(vec2 p, vec2 half_size, float r) {
-    vec2 q = abs(p) - half_size + r;
-    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
-}
+#include "roundrect.glsl"
 
 vec2 backdropUv(vec2 local) {
     vec2 uv;
@@ -58,7 +56,7 @@ void main() {
     vec2 p = qt_TexCoord0 * itemSize - half_size;
     float r = min(radius, min(half_size.x, half_size.y));
     float d = roundBox(p, half_size, r);          // negative inside
-    float coverage = clamp(0.5 - d, 0.0, 1.0);
+    float coverage = edgeCoverage(d);
     if (coverage <= 0.0) {
         fragColor = vec4(0.0);
         return;
