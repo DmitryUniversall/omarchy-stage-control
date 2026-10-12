@@ -91,6 +91,18 @@ PanelWindow {
     return windowsByAddress[address] || null
   }
 
+  // The model above as JSON, by property name. A value is handed out only
+  // when it changed, so a refresh that finds everything as it was (most of
+  // them, since Hyprland's events often change nothing on the stage)
+  // re-evaluates no tile's or thumbnail's bindings.
+  property var modelJson: ({})
+  function setModel(name, value) {
+    var json = JSON.stringify(value)
+    if (modelJson[name] === json) return
+    modelJson[name] = json
+    win[name] = value
+  }
+
   readonly property real barSpace: mission ? spacesBar.reservedHeight : 0
   // The bar's size follows the number of desktops, which rebuild() itself
   // sets, so lay out again after the change rather than inside it, and only
@@ -123,34 +135,33 @@ PanelWindow {
   // desktops (and their thumbnails capture no windows).
   function rebuildDesktops() {
     if (!showsHere || !service || !mission) {
-      desktopIds = []
-      desktopData = ({})
+      setModel("desktopIds", [])
+      setModel("desktopData", {})
       return
     }
     var list = service.desktopsFor(screenName)
     var data = {}
     list.forEach(function(desktop) { data[desktop.id] = desktop })
     // The Spaces bar's size follows the number of desktops, and the windows'
-    // layout follows the bar's: hand it a new list only when the desktops
-    // changed, so a layout pass can't set off another.
-    var ids = list.map(function(desktop) { return desktop.id })
-    if (ids.join(",") !== desktopIds.join(",")) desktopIds = ids
-    desktopData = data
+    // layout follows the bar's: it gets a new list only when the desktops
+    // changed (setModel), so a layout pass can't set off another.
+    setModel("desktopIds", list.map(function(desktop) { return desktop.id }))
+    setModel("desktopData", data)
   }
 
   function rebuild() {
     if (!showsHere || !snap || !monitor || width <= 0 || height <= 0) {
-      tileIds = []
-      tileData = ({})
-      groups = []
-      placed = ({})
-      minimizedIds = []
+      setModel("tileIds", [])
+      setModel("tileData", {})
+      setModel("groups", [])
+      setModel("placed", {})
+      setModel("minimizedIds", [])
       rebuildDesktops()
       return
     }
     var byAddress = {}
     snap.windows.forEach(function(w) { byAddress[w.address] = w })
-    windowsByAddress = byAddress
+    setModel("windowsByAddress", byAddress)
     // Desktops first: the Spaces bar, which the windows leave room for, is
     // sized by how many there are.
     rebuildDesktops()
@@ -233,14 +244,14 @@ PanelWindow {
       })
     })
 
-    groups = result.groups.map(function(group) {
+    setModel("groups", result.groups.map(function(group) {
       var app = service.appFor(group.key)
       return { key: group.key, x: group.x, y: group.y, w: group.w, h: group.h, icon: app.icon, name: app.name }
-    })
-    tileData = data
-    tileIds = ids
-    placed = rects
-    minimizedIds = minIds
+    }))
+    setModel("tileData", data)
+    setModel("tileIds", ids)
+    setModel("placed", rects)
+    setModel("minimizedIds", minIds)
     if (selectedAddress && !data[selectedAddress]) selectedAddress = ""
     if (hoverAddress && !data[hoverAddress]) hoverAddress = ""
   }
