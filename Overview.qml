@@ -282,7 +282,7 @@ PanelWindow {
         if (!item || !item.hasContent) return
       }
       if (!screenGhost.hasContent) return
-      if (wallpaper.status === Image.Loading) return
+      if (wallpaperImage.status === Image.Loading) return
       win.service.markReady(win.screenName)
     }
   }
@@ -422,21 +422,38 @@ PanelWindow {
     // matches the screen.
     opacity: !win.service ? 0 : win.service.revealed ? (win.reduceMotion ? win.p : 1) : 0.004
 
-    // The wallpaper, blurring and dimming as the stage opens.
+    // The wallpaper, blurring and dimming as the stage opens. One pass
+    // (shaders/backdrop.frag) draws what used to be three full-screen layers
+    // on top of each other, the wallpaper, its blur fading in and the dim,
+    // and draws it the same: the frames of the animation cost one pass, not
+    // three, and nothing needs caching once the stage has settled.
     Item {
       id: backdrop
       anchors.fill: parent
-      // The live previews redraw the open stage many times a second. Once it
-      // has settled, the wallpaper, its blur and the dim are one cached
-      // picture, so each redraw starts with one full-screen pass, not three.
-      layer.enabled: win.settled
+
+      readonly property bool blurs: win.settings.background !== "dim"
+      readonly property real dim: (win.settings.dim === undefined ? 25 : win.settings.dim) / 100
+
+      // The part of a pw x ph image that PreserveAspectCrop shows in a
+      // w x h item, as QQuickImage works it out: centered, in whole pixels.
+      function cropFor(pw, ph, w, h) {
+        if (!(pw > 0 && ph > 0 && w > 0 && h > 0)) return Qt.vector4d(0, 0, 1, 1)
+        var wscale = w / pw, hscale = h / ph
+        if (wscale > hscale) {
+          var rows = Math.trunc(hscale / wscale * ph)
+          return Qt.vector4d(0, Math.ceil((ph - rows) / 2) / ph, 1, rows / ph)
+        }
+        var columns = Math.trunc(wscale / hscale * pw)
+        return Qt.vector4d(Math.ceil((pw - columns) / 2) / pw, 0, columns / pw, 1)
+      }
 
       // Loaded the way Omarchy's own background loads the same file: off the
       // shell's main thread (so a slow or never-ending file can't stall the
-      // shell) and from the shared image cache.
+      // shell) and from the shared image cache. Drawn by the pass below.
       Image {
-        id: wallpaper
+        id: wallpaperImage
         anchors.fill: parent
+        visible: false
         source: win.service ? win.service.wallpaperUrl : ""
         fillMode: Image.PreserveAspectCrop
         asynchronous: true
@@ -444,27 +461,35 @@ PanelWindow {
         smooth: true
       }
 
+      // The blur itself never changes, only how much of it shows: rendered
+      // once, at half the size (it's a blur), into a layer the pass below
+      // fades in.
       MultiEffect {
+        id: blurLayer
         anchors.fill: parent
-        source: wallpaper
-        visible: win.settings.background !== "dim" && opacity > 0.01
-        opacity: win.preparing ? 0.5 : win.smooth(0, 0.6, win.e)
+        source: wallpaperImage
+        visible: false
         blurEnabled: true
         blurMax: 64
         blur: 1.0
         saturation: 0.25
         autoPaddingEnabled: false
-        // The blur itself never changes, only how much of it shows: render it
-        // once, at half the size (it's a blur), and fade that.
         layer.enabled: true
         layer.smooth: true
         layer.textureSize: Qt.size(Math.max(1, Math.round(width / 2)), Math.max(1, Math.round(height / 2)))
       }
 
-      Rectangle {
+      ShaderEffect {
         anchors.fill: parent
-        color: "black"
-        opacity: (win.settings.dim === undefined ? 25 : win.settings.dim) / 100 * win.e
+        property var wallpaper: wallpaperImage
+        // With the dim background there's no blur to draw (or to render).
+        property var blurred: backdrop.blurs ? blurLayer : wallpaperImage
+        property vector4d crop: backdrop.cropFor(wallpaperImage.implicitWidth, wallpaperImage.implicitHeight, width, height)
+        // The blur showed only above 1% (below that it wasn't drawn at all).
+        readonly property real blurShown: win.preparing ? 0.5 : win.smooth(0, 0.6, win.e)
+        property real blurAmount: backdrop.blurs && blurShown > 0.01 ? blurShown : 0
+        property real dim: backdrop.dim * win.e
+        fragmentShader: Qt.resolvedUrl("shaders/backdrop.frag.qsb")
       }
     }
 

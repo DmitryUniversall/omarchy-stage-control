@@ -199,10 +199,10 @@ does).
 Stage Control runs as unsandboxed code in the Omarchy shell, like every shell
 plugin, so here is exactly what it does.
 
-**No network, no root, nothing compiled on your machine.** The two shaders,
-Liquid Glass and the rounded window previews, ship as source
-(`shaders/glass.frag`, `shaders/rounded.frag`) next to the `.qsb` files Qt
-loads; `shaders/build` rebuilds them with Qt's `qsb`, and with qsb 6.11 the
+**No network, no root, nothing compiled on your machine.** The three
+shaders, the stage's backdrop, Liquid Glass and the rounded window previews,
+ship as source (`shaders/backdrop.frag`, `shaders/glass.frag`,
+`shaders/rounded.frag`) next to the `.qsb` files Qt loads; `shaders/build` rebuilds them with Qt's `qsb`, and with qsb 6.11 the
 result is byte for byte the committed files.
 
 **Programs.** Every command runs by absolute path with an argument list, never
