@@ -74,11 +74,41 @@ Item {
     fragmentShader: Qt.resolvedUrl("shaders/glass.frag.qsb")
   }
 
-  // Where the pane sits over a backdrop that isn't the whole window,
-  // followed every frame while it shows (panes ride on animated parents).
-  FrameAnimation {
-    running: glass.refracting && !glass.backdropIsWindow && glass.visible && glass.opacity > 0
-    onTriggered: glass.updateArea()
+  // Where the pane sits over a backdrop that isn't the whole window (the
+  // settings window's preview). Worked out again when the pane, its parent
+  // or that backdrop moves or changes size, not on every frame: a
+  // FrameAnimation did that, waking the shell on every frame for as long as
+  // the settings window was open. Panes over the whole window (the stage's)
+  // listen to none of it, as they move on every frame of an animation.
+  // Not before the pane is complete: reading `refracting` while it's still
+  // being built would evaluate `backdrop` before its binding can resolve.
+  property bool built: false
+  function placeArea() {
+    if (built && refracting && !backdropIsWindow) updateArea()
+  }
+  onRefractingChanged: placeArea()
+  Component.onCompleted: {
+    built = true
+    placeArea()
+  }
+  Connections {
+    target: glass.backdropIsWindow ? null : glass
+    function onXChanged() { glass.placeArea() }
+    function onYChanged() { glass.placeArea() }
+    function onWidthChanged() { glass.placeArea() }
+    function onHeightChanged() { glass.placeArea() }
+  }
+  Connections {
+    target: glass.backdropIsWindow ? null : glass.parent
+    ignoreUnknownSignals: true
+    function onXChanged() { glass.placeArea() }
+    function onYChanged() { glass.placeArea() }
+  }
+  Connections {
+    target: glass.backdropIsWindow ? null : glass.backdropSpace
+    ignoreUnknownSignals: true
+    function onWidthChanged() { glass.placeArea() }
+    function onHeightChanged() { glass.placeArea() }
   }
 
   function updateArea() {
