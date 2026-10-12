@@ -158,13 +158,38 @@ passed++;
   passed++;
 }
 
+// Layout.spacesBar() as it was before it learned to fit dozens of desktops:
+// up to 20 desktops it must still give exactly these metrics.
+function spacesBarUpTo20(width, count, aspect) {
+  const n = Math.max(1, Math.floor(count) || 1);
+  const ratio = aspect > 0 ? aspect : 0.625;
+  const ideal = Math.max(112, Math.min(236, width * 0.118));
+  const addShare = 0.62 * ratio;
+  const fit = spacing => {
+    const room = width - 2 * 28 - 20 - spacing * (n - 1) - 2;
+    return Math.min(room / (n + addShare), (room - 40) / n);
+  };
+  let spacing = 26;
+  if (fit(spacing) < 100) spacing = 12;
+  const thumbW = Math.floor(Math.max(24, Math.min(ideal, fit(spacing))));
+  const thumbH = Math.round(thumbW * ratio);
+  return {
+    thumbW, thumbH,
+    add: Math.round(Math.max(40, thumbH * 0.62)),
+    spacing, collapsedSpacing: 12,
+    collapsedSlot: Math.max(24, Math.floor((width - 2 * 28 - 12 * (n - 1)) / n)),
+    margin: 28, addGap: 20,
+  };
+}
+
 // The Spaces bar fits every desktop and the "+" on the screen, however many
 // desktops there are (ten on a 1800-pixel laptop once pushed the first three
-// off the left edge), and keeps its macOS size when there's room.
+// off the left edge, and 36 on a 1280-pixel screen ran past both edges), and
+// keeps its macOS size when there's room.
 {
-  for (const width of [1024, 1280, 1366, 1440, 1512, 1800, 1920, 2560, 3440, 3840]) {
+  for (const width of [1024, 1280, 1366, 1440, 1512, 1800, 1811, 1920, 2560, 3440, 3840]) {
     for (const aspect of [0.5625, 0.625, 2 / 3, 0.75, 0.4]) {
-      for (let count = 1; count <= 20; count++) {
+      for (let count = 1; count <= 100; count++) {
         const m = plain(Layout.spacesBar(width, count, aspect));
         const label = `spaces bar ${width}px, ${count} desktops, aspect ${aspect.toFixed(3)}`;
         const expanded = count * m.thumbW + (count - 1) * m.spacing + m.addGap + m.add + 2 * m.margin;
@@ -173,6 +198,9 @@ passed++;
         assert.ok(collapsed <= width, `${label}: names fit`);
         assert.equal(m.thumbH, Math.round(m.thumbW * aspect), `${label}: thumbnails keep the display's shape`);
         assert.ok(m.thumbW <= 236, `${label}: never larger than macOS's`);
+        assert.ok(m.thumbW >= 1 && m.collapsedSlot >= 1, `${label}: every desktop keeps some width`);
+        assert.ok(m.spacing >= 2 && m.collapsedSpacing >= 2, `${label}: desktops never touch`);
+        if (count <= 20) assert.deepEqual(m, spacesBarUpTo20(width, count, aspect), `${label}: as before up to 20 desktops`);
       }
     }
   }
