@@ -269,7 +269,7 @@ Stage Control takes its gesture, shortcuts and rules back out of Hyprland.
 ## Development
 
 ```bash
-tests/run          # layout, desktop plans, settings, and the Hyprland module (needs node and lua)
+tests/run          # layout, desktop plans, settings, swipes, and the Hyprland module (needs node and lua)
 shaders/build      # recompile the shaders (needs qt6-shadertools)
 ```
 

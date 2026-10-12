@@ -6,6 +6,7 @@ import qs.Commons
 import "Defaults.js" as Defaults
 import "Settings.js" as Settings
 import "Model.js" as Model
+import "Gesture.js" as Gesture
 
 // Stage Control: organize your Omarchy desktops from one view, the stage.
 //
@@ -801,6 +802,7 @@ Item {
   property int swipeDirection: 0      // sign of a swipe toward "open": -1 up (the stage), +1 down (App Exposé)
   property real swipeOrigin: 0        // progress when the fingers took over
   property var swipeSamples: []
+  property var swipeTrail: []         // where the fingers were, when (Gesture.js)
   property int swipeRead: 0           // the read the fingers started on touching down
   property string lastGestureKey: ""
 
@@ -826,6 +828,7 @@ Item {
     swipeTravel = 0
     swipeIntent = ""
     swipeSamples = []
+    swipeTrail = []
     // Read Hyprland now so the overlay is ready by the time the fingers commit.
     swipeRead = !shown && refresh(null) ? runningRead : 0
     gestureUpdate(event)
@@ -837,9 +840,21 @@ Item {
     var samples = swipeSamples.slice(-5)
     samples.push({ dy: event.dy, time: event.time })
     swipeSamples = samples
+    swipeTrail = Gesture.extendTrail(swipeTrail, event.time, Date.now(), swipeTravel)
     if (swipeIntent === "") decideIntent()
-    if (swipeIntent === "open" || swipeIntent === "close")
-      progress = Math.max(0, Math.min(1, swipeOrigin + swipeTravel * swipeDirection / swipeDistance))
+  }
+
+  // Where the fingers put the stage on this frame: where they were a moment
+  // ago, so it moves evenly from frame to frame (Gesture.js).
+  function fingersProgress(origin) {
+    var travel = Gesture.shownTravel(swipeTrail, Date.now())
+    return Math.max(0, Math.min(1, origin + travel * swipeDirection / swipeDistance))
+  }
+
+  // Following the fingers: the stage moves once a frame, not at each event.
+  FrameAnimation {
+    running: root.tracking && (root.swipeIntent === "open" || root.swipeIntent === "close")
+    onTriggered: root.progress = root.fingersProgress(root.swipeOrigin)
   }
 
   function decideIntent() {
@@ -866,10 +881,10 @@ Item {
     swipeDirection = direction
     tracking = true
     closing = false
-    // Pick up from the current state, minus the travel so far.
-    swipeOrigin = fresh ? 0 : progress - swipeTravel * direction / swipeDistance
+    // Pick up from the current state, minus the travel shown so far.
+    swipeOrigin = fresh ? 0 : progress - Gesture.shownTravel(swipeTrail, Date.now()) * direction / swipeDistance
     if (fresh) startMode(which, true)
-    progress = Math.max(0, Math.min(1, swipeOrigin + swipeTravel * direction / swipeDistance))
+    progress = fingersProgress(swipeOrigin)
   }
 
   // Speed toward "open" at the moment the fingers lifted, in distance units
@@ -893,11 +908,13 @@ Item {
     tracking = false
     var velocity = swipeVelocity(event.time)
     var perUnit = velocity / swipeDistance
-    // Where the fingers were heading decides, then how far they got: a third
-    // of the way opens it, a third of the way back closes it.
+    // Where the fingers were heading decides, then how far they got (they're
+    // a moment ahead of the stage): a third of the way opens it, a third of
+    // the way back closes it. The stage goes on from where it is.
+    var reached = Math.max(0, Math.min(1, swipeOrigin + swipeTravel * swipeDirection / swipeDistance))
     var threshold = intent === "close" ? 0.7 : 0.3
-    var open = velocity > 0.35 ? true : velocity < -0.35 ? false : progress > threshold
-    if (event.cancelled) open = progress > 0.5
+    var open = velocity > 0.35 ? true : velocity < -0.35 ? false : reached > threshold
+    if (event.cancelled) open = reached > 0.5
     if (open) {
       if (revealed) animateTo(1, perUnit)
     } else {
