@@ -651,6 +651,7 @@ Item {
   // ready, then the opening animation starts (or the fingers take over).
   function startMode(which, byGesture, forcedClass) {
     progressAnim.stop()
+    animating = false
     closing = false
     exitAddress = ""
     var serial = ++openSerial
@@ -743,6 +744,7 @@ Item {
 
   function finishClose() {
     progressAnim.stop()
+    animating = false
     openSerial++
     mode = ""
     closing = false
@@ -758,15 +760,22 @@ Item {
     target: root
     property: "progress"
     onFinished: {
+      root.animating = false
       if (root.closing && root.progress <= 0.001) root.finishClose()
     }
   }
+  // Opening or closing on its own (not following the fingers). A flag rather
+  // than the animation's `running`, which turns false for a moment whenever
+  // animateTo() restarts it (closing on the way in, say) and would wake every
+  // paused preview at once.
+  property bool animating: false
 
   function animateTo(target, velocity) {
     progressAnim.stop()
     var reduce = settings && settings.reduceMotion
     var distance = Math.abs(target - progress)
     if (distance < 0.001) {
+      animating = false
       progress = target
       if (closing && target === 0) finishClose()
       return
@@ -780,6 +789,7 @@ Item {
     progressAnim.to = target
     progressAnim.duration = Math.round(duration)
     progressAnim.easing.type = reduce ? Easing.InOutQuad : Easing.OutCubic
+    animating = true
     progressAnim.start()
   }
 
@@ -850,6 +860,7 @@ Item {
 
   function beginTracking(which, direction, intent) {
     progressAnim.stop()
+    animating = false
     var fresh = !shown
     swipeIntent = intent
     swipeDirection = direction

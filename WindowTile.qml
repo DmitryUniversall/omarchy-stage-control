@@ -201,7 +201,12 @@ Item {
       id: capture
       anchors.fill: parent
       captureSource: tile.overview && tile.overview.showsHere && tile.handle ? tile.handle.wayland : null
-      live: !!tile.overview && tile.overview.showsHere
+      // Not while the stage opens or closes by itself: Hyprland renders a
+      // live capture again on every frame, changed or not, and those frames
+      // are the ones with the least time to spare. The window flies with the
+      // frame it has and comes alive again when it lands. While the fingers
+      // hold the stage, it stays live.
+      live: !!tile.overview && tile.overview.showsHere && !(tile.service && tile.service.animating)
     }
   }
 
