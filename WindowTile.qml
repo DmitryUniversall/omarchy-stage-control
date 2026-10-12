@@ -29,6 +29,9 @@ Item {
   readonly property bool exiting: !!service && service.exitAddress === modelData
   readonly property bool dragging: !!overview && overview.dragAddress === modelData
   readonly property bool hasContent: capture.hasContent
+  // The live preview as rendered here, for the Spaces bar's picture of this
+  // desktop (DesktopThumb), so it needn't capture the window again.
+  readonly property Item preview: frame.contentLayer
   readonly property var handle: {
     Hyprland.toplevels.values
     return service ? service.toplevelFor(modelData) : null

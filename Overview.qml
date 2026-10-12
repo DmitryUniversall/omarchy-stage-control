@@ -266,8 +266,23 @@ PanelWindow {
     }
   }
 
-  function registerTile(address, item) { tileItems[address] = item }
-  function unregisterTile(address, item) { if (tileItems[address] === item) delete tileItems[address] }
+  // Counts tiles coming and going, so a binding that looks a tile up
+  // (tileFor) follows them.
+  property int tileRevision: 0
+
+  function registerTile(address, item) {
+    tileItems[address] = item
+    tileRevision++
+  }
+  function unregisterTile(address, item) {
+    if (tileItems[address] !== item) return
+    delete tileItems[address]
+    tileRevision++
+  }
+  function tileFor(address) {
+    tileRevision
+    return tileItems[address] || null
+  }
 
   // Ready to show once every preview has a frame (the service stops waiting
   // after a moment either way).

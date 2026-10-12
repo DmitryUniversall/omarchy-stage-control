@@ -136,6 +136,16 @@ Item {
           width: win ? Math.max(2, win.w * s) : 0
           height: win ? Math.max(2, win.h * s) : 0
           z: win ? (win.floating ? 200 : 0) + (100 - Math.min(99, win.focus)) : 0
+          // On the desktop on screen every window is also a tile on the stage,
+          // already captured live: show the tile's picture instead of
+          // capturing the window a second time (once it has one, so a desktop
+          // that just came on screen doesn't blank). Other desktops capture
+          // theirs.
+          readonly property Item tilePreview: {
+            if (!thumb.active || !thumb.overview) return null
+            var tile = thumb.overview.tileFor(modelData)
+            return tile && tile.hasContent ? tile.preview : null
+          }
 
           Rectangle {
             anchors.fill: parent
@@ -143,11 +153,20 @@ Item {
             radius: 2
             color: Qt.rgba(0, 0, 0, 0.25)
           }
+          Loader {
+            anchors.fill: parent
+            active: !!mini.tilePreview
+            sourceComponent: ShaderEffect {
+              property var source: mini.tilePreview
+            }
+          }
           ScreencopyView {
             anchors.fill: parent
-            captureSource: thumb.overview && thumb.overview.showsHere && mini.handle ? mini.handle.wayland : null
-            // The desktop on screen is live while you can see it; the others
-            // hold the frame they had.
+            visible: !mini.tilePreview
+            captureSource: !mini.tilePreview && thumb.overview && thumb.overview.showsHere && mini.handle
+              ? mini.handle.wayland : null
+            // A window on the desktop on screen without a tile is live while you
+            // can see it; the other desktops hold the frame they had.
             live: thumb.active && thumb.ex > 0.01
           }
         }

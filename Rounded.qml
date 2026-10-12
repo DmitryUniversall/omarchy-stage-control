@@ -18,6 +18,9 @@ Item {
   property real contentHeight: height
 
   default property alias data: content.data
+  // The content as rendered, before the corners are cut: a texture anything
+  // else can show without rendering it again.
+  readonly property alias contentLayer: content
 
   Item {
     id: content
