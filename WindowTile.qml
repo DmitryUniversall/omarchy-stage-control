@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Effects
 import Quickshell
 import Quickshell.Wayland
-import Quickshell.Widgets
 import Quickshell.Hyprland
 
 // One window on the stage: a live preview that travels from where the
@@ -218,12 +217,20 @@ Item {
     Behavior on opacity { NumberAnimation { duration: 140 } }
   }
 
-  // App icon, riding on the bottom edge.
-  IconImage {
+  // App icon, riding on the bottom edge. It's sized from the window, so its
+  // size changes as the window travels. It's rasterized once, at its size in
+  // the spread, and scaled on the way: IconImage loads an icon at the size it
+  // shows, which rendered it again at every size the animation went through.
+  Image {
     id: badge
     readonly property bool wanted: !!tile.overview && tile.overview.showIcons && !tile.overview.grouped && !!tile.info && tile.info.icon !== ""
+    readonly property real size: Math.round(Math.max(26, Math.min(44, frame.width * 0.11)))
+    readonly property real restSize: tile.info ? Math.round(Math.max(26, Math.min(44, tile.info.to.w * 0.11))) : size
     source: wanted ? tile.info.icon : ""
-    implicitSize: Math.round(Math.max(26, Math.min(44, frame.width * 0.11)))
+    sourceSize: Qt.size(restSize, restSize)
+    width: size
+    height: size
+    fillMode: Image.PreserveAspectFit
     anchors.horizontalCenter: frame.horizontalCenter
     anchors.verticalCenter: frame.bottom
     opacity: wanted && !tile.dragging && !tile.dropping ? tile.smooth(0.55, 1, tile.p) : 0
@@ -241,7 +248,7 @@ Item {
       && ((titles === "always" && !tile.overview.grouped) || (titles !== "never" && tile.lit))
     anchors.horizontalCenter: frame.horizontalCenter
     anchors.top: frame.bottom
-    anchors.topMargin: badge.visible ? badge.implicitSize / 2 + 6 : 10
+    anchors.topMargin: badge.visible ? badge.size / 2 + 6 : 10
     width: Math.min(Math.max(frame.width, 200), titleText.implicitWidth + 28)
     height: 26
     radius: 13
