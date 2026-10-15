@@ -324,9 +324,13 @@ PanelWindow {
       var from = onScreen ? Model.localRect(w, monitor)
         : { x: to.x + to.w * 0.04, y: to.y + to.h * 0.04 + 30, w: to.w * 0.92, h: to.h * 0.92 }
       var app = service.appFor(w.cls)
+      var home = Model.monitorById(snap, w.monitor) || monitor
       data[w.address] = {
         address: w.address, title: w.title, initialTitle: w.initialTitle, cls: w.cls, icon: app.icon, appName: app.name,
         from: from, to: to, size: { w: w.w, h: w.h }, onScreen: onScreen, minimized: false,
+        // Where the window is on its display, whichever desktop it's on:
+        // what shows through it is taken from there (WindowTile).
+        place: Model.localRect(w, home),
         workspace: w.workspace, z: (w.floating ? 200 : 0) + (windows.length - index)
       }
       ids.push(w.address)
@@ -408,9 +412,11 @@ PanelWindow {
           var to = peekResult.windows[w.address]
           if (!to || data[w.address]) return
           var app = service.appFor(w.cls)
+          var home = Model.monitorById(snap, w.monitor) || monitor
           data[w.address] = {
             address: w.address, title: w.title, initialTitle: w.initialTitle, cls: w.cls, icon: app.icon, appName: app.name,
             from: to, to: to, size: { w: w.w, h: w.h }, onScreen: false, minimized: false,
+            place: Model.localRect(w, home),
             workspace: w.workspace, z: (w.floating ? 200 : 0) + (peekWindows.length - index),
             peek: true, peekPage: peekPage
           }

@@ -264,11 +264,14 @@ Item {
   }
 
   // Under the window, what Hyprland shows through it where it's
-  // translucent: the blurred wallpaper (Overview.windowBackdrop), taken from
-  // wherever the window is on the stage as it moves. The window used to sit
-  // on a flat dark gray, which turned translucent terminals and themed
-  // browsers gray the moment the stage showed. The pane is Glass's shader
-  // with nothing but its window-space sampling and rounded corners.
+  // translucent: the blurred wallpaper (Overview.windowBackdrop), the part
+  // that's behind the window on its desktop (info.place). It goes where the
+  // window goes and shrinks with it, as part of the window: taken from
+  // wherever the window was on the stage instead, the wallpaper slid
+  // through it as it flew. (The window used to sit on a flat dark gray,
+  // which turned translucent terminals and themed browsers gray the moment
+  // the stage showed.) The pane is Glass's shader with nothing but its
+  // sampling and rounded corners.
   ShaderEffect {
     anchors.fill: frame
     visible: !!backdrop
@@ -280,8 +283,11 @@ Item {
     property real frost: 0
     property real rim: 0
     property real flip: 0
-    property real windowSpace: 1
-    property vector4d area: Qt.vector4d(0, 0, 1, 1)
+    property real windowSpace: 0
+    readonly property var place: tile.info && tile.info.place ? tile.info.place : tile.from
+    readonly property real stageW: tile.overview ? Math.max(1, tile.overview.stageWidth) : 1
+    readonly property real stageH: tile.overview ? Math.max(1, tile.overview.stageHeight) : 1
+    property vector4d area: Qt.vector4d(place.x / stageW, place.y / stageH, place.w / stageW, place.h / stageH)
     property vector4d tint: Qt.vector4d(0, 0, 0, 0)
     property vector4d fill: Qt.vector4d(0, 0, 0, 0)
     fragmentShader: Qt.resolvedUrl("shaders/glass.frag.qsb")
