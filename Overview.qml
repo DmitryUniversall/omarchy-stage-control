@@ -7,10 +7,12 @@ import qs.Commons
 import "Layout.js" as Layout
 import "Model.js" as Model
 
-// The stage on one display: a full-screen layer over everything. At
-// progress 0 it looks exactly like the desktop (the wallpaper, every window
-// where it is, the bar); as progress goes to 1 the windows fly into the
-// spread, the wallpaper blurs and dims, and the Spaces bar slides in.
+// The stage on one display: a full-screen layer over everything but the top
+// bar (and whatever else Hyprland keeps room for at the screen's edges),
+// which stays as it is, live and clickable. At progress 0 the stage looks
+// exactly like the desktop (the wallpaper, every window where it is); as
+// progress goes to 1 the windows fly into the spread, the wallpaper blurs
+// and dims, and the Spaces bar slides out from under the top bar.
 PanelWindow {
   id: win
 
@@ -36,7 +38,7 @@ PanelWindow {
   // the glass get made now instead of all on the first frame you see. What
   // would be transparent at progress 0 is drawn at half opacity until then,
   // enough for Qt to draw it at all (it skips anything below 1/1000).
-  readonly property bool preparing: !!service && service.shown && !service.revealed
+  readonly property bool preparing: (!!service && service.shown && !service.revealed) || warming
 
   readonly property string glassStyle: settings.glass || "liquid"
   readonly property string windowTitles: settings.windowTitles || "hover"
@@ -51,13 +53,43 @@ PanelWindow {
   readonly property alias screenCapture: screenGhost
   readonly property alias glassBackdrop: glassBackdrop
 
-  visible: showsHere
+  // The stage is the display's size, whatever size the window has just
+  // then (see below).
+  readonly property real stageWidth: monitor ? monitor.w : width
+  readonly property real stageHeight: monitor ? monitor.h : height
+
+  // The screen's edges the stage leaves uncovered: the room Hyprland keeps
+  // for the top bar (and a dock), unless the stage is set to cover the bar.
+  // Numbers first, so the edges change only when one of them does, not with
+  // every read of Hyprland's state.
+  readonly property bool keepBar: settings.keepBar !== false
+  readonly property real edgeTop: keepBar && monitor && monitor.reserved ? monitor.reserved.top : 0
+  readonly property real edgeLeft: keepBar && monitor && monitor.reserved ? monitor.reserved.left : 0
+  readonly property real edgeRight: keepBar && monitor && monitor.reserved ? monitor.reserved.right : 0
+  readonly property real edgeBottom: keepBar && monitor && monitor.reserved ? monitor.reserved.bottom : 0
+  readonly property var edges: ({ top: edgeTop, left: edgeLeft, right: edgeRight, bottom: edgeBottom })
+
+  // The window stays up while the stage is closed: one made afresh for every
+  // opening spent about 100 ms on its first frame, so a swipe's stage
+  // appeared only when the fingers were well on their way. Closed, it's a
+  // single transparent pixel in the corner that takes no input; opening
+  // stretches it over the screen.
+  visible: !!service
   color: "transparent"
   anchors {
     top: true
-    bottom: true
     left: true
-    right: true
+    bottom: drawn
+    right: drawn
+  }
+  implicitWidth: 1
+  implicitHeight: 1
+  // Input only where the stage is: the top bar's clicks go to the bar.
+  mask: Region {
+    x: win.showsHere ? win.edges.left : 0
+    y: win.showsHere ? win.edges.top : 0
+    width: win.showsHere ? Math.max(0, win.stageWidth - win.edges.left - win.edges.right) : 0
+    height: win.showsHere ? Math.max(0, win.stageHeight - win.edges.top - win.edges.bottom) : 0
   }
   exclusionMode: ExclusionMode.Ignore
   WlrLayershell.namespace: "marcho78-stage-control"
@@ -68,6 +100,28 @@ PanelWindow {
   function smooth(edge0, edge1, x) {
     var t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)))
     return t * t * (3 - 2 * t)
+  }
+
+  // ---- warming up ------------------------------------------------------------------
+  //
+  // Opening the stage the first time also makes its textures: the
+  // wallpaper, its blur, the glass's backdrop. So once the shell has
+  // settled, and again when the wallpaper changes, the stage draws itself
+  // for a moment while closed, as it does while preparing (unseen, at
+  // 1/250 opacity, taking no input), and keeps them for its first opening.
+  property bool warming: false
+  readonly property bool drawn: showsHere || warming
+
+  function warmUp() {
+    if (showsHere || !monitor) return
+    warming = true
+    warmTimer.restart()
+  }
+
+  Timer {
+    id: warmTimer
+    interval: 250
+    onTriggered: win.warming = false
   }
 
   Component.onCompleted: if (service) service.registerOverview(screenName, win)
@@ -112,9 +166,11 @@ PanelWindow {
   function relayoutForBar() {
     if (barSpace !== layoutBarSpace) rebuild()
   }
-  onWidthChanged: rebuild()
-  onHeightChanged: rebuild()
+  onStageWidthChanged: rebuild()
+  onStageHeightChanged: rebuild()
   onShowsHereChanged: {
+    // The window stays up between openings, so the keys come back here.
+    if (showsHere) Qt.callLater(focusKeys)
     hoverAddress = ""
     selectedAddress = ""
     cancelDrag()
@@ -188,8 +244,11 @@ PanelWindow {
       rebuildDesktops()
       return
     }
-    // Laid out once the window has its size (onWidthChanged).
+    var width = monitor.w
+    var height = monitor.h
     if (width <= 0 || height <= 0) return
+    // The edges left uncovered, as `edges` (read here for the same reason).
+    var edge = settings.keepBar !== false && monitor.reserved ? monitor.reserved : { top: 0, left: 0, right: 0, bottom: 0 }
     var byAddress = {}
     snap.windows.forEach(function(w) { byAddress[w.address] = w })
     setModel("windowsByAddress", byAddress)
@@ -205,9 +264,9 @@ PanelWindow {
     var side = Math.round(Math.max(40, width * 0.045))
     var bar = mission ? spacesBar.reservedHeight : 0
     layoutBarSpace = bar
-    var top = expose ? 96 : bar + 26
-    var bottom = minimized.length ? Math.round(height * 0.2) + 40 : 64
-    var area = { x: side, y: top, w: Math.max(100, width - side * 2), h: Math.max(100, height - top - bottom) }
+    var top = edge.top + (expose ? 96 : bar + 26)
+    var bottom = edge.bottom + (minimized.length ? Math.round(height * 0.2) + 40 : 64)
+    var area = { x: edge.left + side, y: top, w: Math.max(100, width - edge.left - edge.right - side * 2), h: Math.max(100, height - top - bottom) }
 
     var items = windows.map(function(w) {
       var home = Model.monitorById(snap, w.monitor) || monitor
@@ -220,7 +279,8 @@ PanelWindow {
     var result = Layout.spread(items, area, { gap: Math.round(Math.max(20, width * 0.022)), maxScale: 0.84,
       groupByApp: mission && settings.groupByApp === true, labelSpace: 46, titleSpace: titleSpace })
 
-    var minimizedArea = { x: side, y: height - Math.round(height * 0.2) - 24, w: width - side * 2, h: Math.round(height * 0.2) }
+    var minimizedArea = { x: edge.left + side, y: height - edge.bottom - Math.round(height * 0.2) - 24,
+      w: width - edge.left - edge.right - side * 2, h: Math.round(height * 0.2) }
     var minimizedResult = minimized.length
       ? Layout.spread(minimized.map(function(w) { return { id: w.address, x: w.x, y: w.y, w: w.w, h: w.h } }), minimizedArea, { gap: 20, maxScale: 0.3 })
       : { windows: {} }
@@ -476,309 +536,327 @@ PanelWindow {
 
   // ---- drawing ------------------------------------------------------------------------------
 
+  // The stage, cut to what it covers: the edges it leaves alone show the
+  // screen itself (the top bar), not the stage's wallpaper. Nothing at all
+  // is drawn while it's closed.
   Item {
-    id: stage
-    anchors.fill: parent
-    // Nothing shows until the previews are ready (see `preparing`); then it
-    // matches the screen.
-    opacity: !win.service ? 0 : win.service.revealed ? (win.reduceMotion ? win.p : 1) : 0.004
+    id: canvas
+    x: win.edges.left
+    y: win.edges.top
+    width: Math.max(0, win.stageWidth - win.edges.left - win.edges.right)
+    height: Math.max(0, win.stageHeight - win.edges.top - win.edges.bottom)
+    clip: win.edges.left + win.edges.top + win.edges.right + win.edges.bottom > 0
+    visible: win.drawn
 
-    // The wallpaper, blurring and dimming as the stage opens. One pass
-    // (shaders/backdrop.frag) draws what used to be three full-screen layers
-    // on top of each other, the wallpaper, its blur fading in and the dim,
-    // and draws it the same: the frames of the animation cost one pass, not
-    // three, and nothing needs caching once the stage has settled.
     Item {
-      id: backdrop
-      anchors.fill: parent
+      id: stage
+      // The whole display, so everything on the stage is placed in the
+      // display's own coordinates.
+      x: -win.edges.left
+      y: -win.edges.top
+      width: win.stageWidth
+      height: win.stageHeight
+      // Nothing shows until the previews are ready (see `preparing`); then it
+      // matches the screen.
+      opacity: !win.service ? 0 : win.service.revealed ? (win.reduceMotion ? win.p : 1) : 0.004
 
-      readonly property bool blurs: win.settings.background !== "dim"
-      readonly property real dim: (win.settings.dim === undefined ? 25 : win.settings.dim) / 100
-      readonly property vector4d crop: cropFor(wallpaperImage.implicitWidth, wallpaperImage.implicitHeight, width, height)
+      // The wallpaper, blurring and dimming as the stage opens. One pass
+      // (shaders/backdrop.frag) draws what used to be three full-screen layers
+      // on top of each other, the wallpaper, its blur fading in and the dim,
+      // and draws it the same: the frames of the animation cost one pass, not
+      // three, and nothing needs caching once the stage has settled.
+      Item {
+        id: backdrop
+        anchors.fill: parent
 
-      // The part of a pw x ph image that PreserveAspectCrop shows in a
-      // w x h item, as QQuickImage works it out: centered, in whole pixels.
-      function cropFor(pw, ph, w, h) {
-        if (!(pw > 0 && ph > 0 && w > 0 && h > 0)) return Qt.vector4d(0, 0, 1, 1)
-        var wscale = w / pw, hscale = h / ph
-        if (wscale > hscale) {
-          var rows = Math.trunc(hscale / wscale * ph)
-          return Qt.vector4d(0, Math.ceil((ph - rows) / 2) / ph, 1, rows / ph)
+        readonly property bool blurs: win.settings.background !== "dim"
+        readonly property real dim: (win.settings.dim === undefined ? 25 : win.settings.dim) / 100
+        readonly property vector4d crop: cropFor(wallpaperImage.implicitWidth, wallpaperImage.implicitHeight, width, height)
+
+        // The part of a pw x ph image that PreserveAspectCrop shows in a
+        // w x h item, as QQuickImage works it out: centered, in whole pixels.
+        function cropFor(pw, ph, w, h) {
+          if (!(pw > 0 && ph > 0 && w > 0 && h > 0)) return Qt.vector4d(0, 0, 1, 1)
+          var wscale = w / pw, hscale = h / ph
+          if (wscale > hscale) {
+            var rows = Math.trunc(hscale / wscale * ph)
+            return Qt.vector4d(0, Math.ceil((ph - rows) / 2) / ph, 1, rows / ph)
+          }
+          var columns = Math.trunc(wscale / hscale * pw)
+          return Qt.vector4d(Math.ceil((pw - columns) / 2) / pw, 0, columns / pw, 1)
         }
-        var columns = Math.trunc(wscale / hscale * pw)
-        return Qt.vector4d(Math.ceil((pw - columns) / 2) / pw, 0, columns / pw, 1)
-      }
 
-      // Loaded the way Omarchy's own background loads the same file: off the
-      // shell's main thread (so a slow or never-ending file can't stall the
-      // shell) and from the shared image cache. Drawn by the pass below.
-      Image {
-        id: wallpaperImage
-        anchors.fill: parent
-        visible: false
-        source: win.service ? win.service.wallpaperUrl : ""
-        fillMode: Image.PreserveAspectCrop
-        asynchronous: true
-        cache: true
-        smooth: true
-      }
-
-      // The blur itself never changes, only how much of it shows: rendered
-      // once, at half the size (it's a blur), into a layer the pass below
-      // fades in.
-      MultiEffect {
-        id: blurLayer
-        anchors.fill: parent
-        source: wallpaperImage
-        visible: false
-        blurEnabled: true
-        blurMax: 64
-        blur: 1.0
-        saturation: 0.25
-        autoPaddingEnabled: false
-        layer.enabled: true
-        layer.smooth: true
-        layer.textureSize: Qt.size(Math.max(1, Math.round(width / 2)), Math.max(1, Math.round(height / 2)))
-      }
-
-      ShaderEffect {
-        anchors.fill: parent
-        property var wallpaper: wallpaperImage
-        // With the dim background there's no blur to draw (or to render).
-        property var blurred: backdrop.blurs ? blurLayer : wallpaperImage
-        property vector4d crop: backdrop.crop
-        // The blur showed only above 1% (below that it wasn't drawn at all).
-        readonly property real blurShown: win.preparing ? 0.5 : win.smooth(0, 0.6, win.e)
-        property real blurAmount: backdrop.blurs && blurShown > 0.01 ? blurShown : 0
-        property real dim: backdrop.dim * win.e
-        fragmentShader: Qt.resolvedUrl("shaders/backdrop.frag.qsb")
-      }
-
-      // The backdrop as it is on the open stage, for the Liquid Glass panes
-      // (glassBackdrop below). It doesn't follow the animation, so the panes
-      // show the stage's own backdrop from their first frame, and nothing has
-      // to be taken again when the stage settles.
-      ShaderEffect {
-        id: settledBackdrop
-        anchors.fill: parent
-        visible: false
-        property var wallpaper: wallpaperImage
-        property var blurred: backdrop.blurs ? blurLayer : wallpaperImage
-        property vector4d crop: backdrop.crop
-        property real blurAmount: backdrop.blurs ? 1 : 0
-        property real dim: backdrop.dim
-        fragmentShader: Qt.resolvedUrl("shaders/backdrop.frag.qsb")
-      }
-    }
-
-    // The open stage's backdrop as one texture, for the Liquid Glass panes
-    // to refract. Half resolution with mipmaps: the panes read it frosted
-    // anyway. It changes only with the wallpaper or the settings, so it's
-    // rendered once while the stage prepares, not while it moves.
-    ShaderEffectSource {
-      id: glassBackdrop
-      sourceItem: settledBackdrop
-      textureSize: Qt.size(Math.max(1, Math.round(win.width / 2)), Math.max(1, Math.round(win.height / 2)))
-      live: true
-      mipmap: true
-      hideSource: false
-      visible: false
-    }
-
-    // The screen as it was when the overlay appeared. The bar (and anything
-    // else Hyprland reserves room for) slides away from it, and each window's
-    // title bar and border ride along with the window and fade, so nothing
-    // blinks out when the stage takes over the screen.
-    ScreencopyView {
-      id: screenGhost
-      readonly property var reserved: win.monitor ? win.monitor.reserved : null
-      readonly property bool wanted: !!reserved && (reserved.top + reserved.bottom + reserved.left + reserved.right) > 0
-      readonly property real fade: win.smooth(0, 0.35, win.p)
-      anchors.fill: parent
-      // One frame per opening: set when the overlay appears, cleared when it goes.
-      captureSource: win.showsHere ? win.modelData : null
-      live: false
-      visible: false
-    }
-
-    Repeater {
-      // As text, so the strips (each with its own copy of its edge) are made
-      // again only when the edges change, not on every read of Hyprland's
-      // state, which hands out a new monitor object each time. But once per
-      // opening: a copy (live: false) is taken once per ShaderEffectSource,
-      // and the overlay's window, with what it took, is new every opening.
-      readonly property string strips: JSON.stringify(win.showsHere && screenGhost.wanted ? [
-        { edge: "top", size: screenGhost.reserved.top },
-        { edge: "bottom", size: screenGhost.reserved.bottom },
-        { edge: "left", size: screenGhost.reserved.left },
-        { edge: "right", size: screenGhost.reserved.right }
-      ].filter(function(strip) { return strip.size > 0 }) : [])
-      model: JSON.parse(strips)
-
-      delegate: Item {
-        id: strip
-        required property var modelData
-        readonly property bool horizontal: modelData.edge === "top" || modelData.edge === "bottom"
-        readonly property real slide: modelData.size * screenGhost.fade
-        x: modelData.edge === "right" ? win.width - modelData.size + slide : modelData.edge === "left" ? -slide : 0
-        y: modelData.edge === "bottom" ? win.height - modelData.size + slide : modelData.edge === "top" ? -slide : 0
-        width: horizontal ? win.width : modelData.size
-        height: horizontal ? modelData.size : win.height
-        opacity: 1 - screenGhost.fade
-        visible: opacity > 0.01 && screenGhost.hasContent
-
-        // Just this edge of the capture, not a copy of the whole screen.
-        ShaderEffectSource {
+        // Loaded the way Omarchy's own background loads the same file: off the
+        // shell's main thread (so a slow or never-ending file can't stall the
+        // shell) and from the shared image cache. Drawn by the pass below.
+        Image {
+          id: wallpaperImage
           anchors.fill: parent
+          visible: false
+          source: win.service ? win.service.wallpaperUrl : ""
+          fillMode: Image.PreserveAspectCrop
+          asynchronous: true
+          cache: true
+          smooth: true
+        }
+
+        // The blur itself never changes, only how much of it shows: rendered
+        // once, at half the size (it's a blur), into a layer the pass below
+        // fades in.
+        MultiEffect {
+          id: blurLayer
+          anchors.fill: parent
+          source: wallpaperImage
+          visible: false
+          blurEnabled: true
+          blurMax: 64
+          blur: 1.0
+          saturation: 0.25
+          autoPaddingEnabled: false
+          layer.enabled: true
+          layer.smooth: true
+          layer.textureSize: Qt.size(Math.max(1, Math.round(width / 2)), Math.max(1, Math.round(height / 2)))
+        }
+
+        ShaderEffect {
+          anchors.fill: parent
+          property var wallpaper: wallpaperImage
+          // With the dim background there's no blur to draw (or to render).
+          property var blurred: backdrop.blurs ? blurLayer : wallpaperImage
+          property vector4d crop: backdrop.crop
+          // The blur showed only above 1% (below that it wasn't drawn at all).
+          readonly property real blurShown: win.preparing ? 0.5 : win.smooth(0, 0.6, win.e)
+          property real blurAmount: backdrop.blurs && blurShown > 0.01 ? blurShown : 0
+          property real dim: backdrop.dim * win.e
+          fragmentShader: Qt.resolvedUrl("shaders/backdrop.frag.qsb")
+        }
+
+        // The backdrop as it is on the open stage, for the Liquid Glass panes
+        // (glassBackdrop below). It doesn't follow the animation, so the panes
+        // show the stage's own backdrop from their first frame, and nothing has
+        // to be taken again when the stage settles.
+        ShaderEffect {
+          id: settledBackdrop
+          anchors.fill: parent
+          visible: false
+          property var wallpaper: wallpaperImage
+          property var blurred: backdrop.blurs ? blurLayer : wallpaperImage
+          property vector4d crop: backdrop.crop
+          property real blurAmount: backdrop.blurs ? 1 : 0
+          property real dim: backdrop.dim
+          fragmentShader: Qt.resolvedUrl("shaders/backdrop.frag.qsb")
+        }
+      }
+
+      // The open stage's backdrop as one texture, for the Liquid Glass panes
+      // to refract. Half resolution with mipmaps: the panes read it frosted
+      // anyway. It changes only with the wallpaper or the settings, so it's
+      // rendered once while the stage prepares, not while it moves.
+      ShaderEffectSource {
+        id: glassBackdrop
+        sourceItem: settledBackdrop
+        textureSize: Qt.size(Math.max(1, Math.round(win.stageWidth / 2)), Math.max(1, Math.round(win.stageHeight / 2)))
+        live: true
+        mipmap: true
+        hideSource: false
+        visible: false
+      }
+
+      // The screen as it was when the overlay appeared. The bar (and anything
+      // else Hyprland reserves room for) slides away from it, and each window's
+      // title bar and border ride along with the window and fade, so nothing
+      // blinks out when the stage takes over the screen.
+      ScreencopyView {
+        id: screenGhost
+        readonly property var reserved: win.monitor ? win.monitor.reserved : null
+        readonly property bool wanted: !!reserved && (reserved.top + reserved.bottom + reserved.left + reserved.right) > 0
+        readonly property real fade: win.smooth(0, 0.35, win.p)
+        anchors.fill: parent
+        // One frame per opening: set when the overlay appears, cleared when it goes.
+        captureSource: win.showsHere ? win.modelData : null
+        live: false
+        visible: false
+      }
+
+      Repeater {
+        // As text, so the strips (each with its own copy of its edge) are made
+        // again only when the edges change, not on every read of Hyprland's
+        // state, which hands out a new monitor object each time. But once per
+        // opening: a copy (live: false) is taken once per ShaderEffectSource,
+        // and the overlay's window, with what it took, is new every opening.
+        readonly property string strips: JSON.stringify(win.showsHere && screenGhost.wanted && !win.keepBar ? [
+          { edge: "top", size: screenGhost.reserved.top },
+          { edge: "bottom", size: screenGhost.reserved.bottom },
+          { edge: "left", size: screenGhost.reserved.left },
+          { edge: "right", size: screenGhost.reserved.right }
+        ].filter(function(strip) { return strip.size > 0 }) : [])
+        model: JSON.parse(strips)
+
+        delegate: Item {
+          id: strip
+          required property var modelData
+          readonly property bool horizontal: modelData.edge === "top" || modelData.edge === "bottom"
+          readonly property real slide: modelData.size * screenGhost.fade
+          x: modelData.edge === "right" ? win.stageWidth - modelData.size + slide : modelData.edge === "left" ? -slide : 0
+          y: modelData.edge === "bottom" ? win.stageHeight - modelData.size + slide : modelData.edge === "top" ? -slide : 0
+          width: horizontal ? win.stageWidth : modelData.size
+          height: horizontal ? modelData.size : win.stageHeight
+          opacity: 1 - screenGhost.fade
+          visible: opacity > 0.01 && screenGhost.hasContent
+
+          // Just this edge of the capture, not a copy of the whole screen.
+          ShaderEffectSource {
+            anchors.fill: parent
+            sourceItem: screenGhost
+            sourceRect: Qt.rect(strip.modelData.edge === "right" ? win.stageWidth - strip.modelData.size : 0,
+                                strip.modelData.edge === "bottom" ? win.stageHeight - strip.modelData.size : 0,
+                                strip.width, strip.height)
+            live: false
+            hideSource: false
+          }
+        }
+      }
+
+      // Everything else layer-shell draws above the windows (a dock,
+      // notifications): shown from the capture, fading out quickly as Mission
+      // Control opens and back in as it closes. Drawn over the windows, as they
+      // were on screen.
+      Repeater {
+        // As text, for the same reasons as the strips above.
+        readonly property string surfaces: JSON.stringify(win.showsHere && win.monitor && win.service
+          ? Model.surfaces(win.service.layers, win.monitor).filter(function(surface) {
+            return surface.namespace !== "omarchy-bar"
+          }) : [])
+        model: JSON.parse(surfaces)
+
+        delegate: ShaderEffectSource {
+          required property var modelData
+          x: modelData.x
+          y: modelData.y
+          width: modelData.w
+          height: modelData.h
+          z: 1050
           sourceItem: screenGhost
-          sourceRect: Qt.rect(strip.modelData.edge === "right" ? win.width - strip.modelData.size : 0,
-                              strip.modelData.edge === "bottom" ? win.height - strip.modelData.size : 0,
-                              strip.width, strip.height)
+          sourceRect: Qt.rect(modelData.x, modelData.y, modelData.w, modelData.h)
           live: false
           hideSource: false
+          opacity: 1 - win.smooth(0, 0.22, win.p)
+          visible: opacity > 0.01 && screenGhost.hasContent
         }
       }
-    }
 
-    // Everything else layer-shell draws above the windows (a dock,
-    // notifications): shown from the capture, fading out quickly as Mission
-    // Control opens and back in as it closes. Drawn over the windows, as they
-    // were on screen.
-    Repeater {
-      // As text, for the same reasons as the strips above.
-      readonly property string surfaces: JSON.stringify(win.showsHere && win.monitor && win.service
-        ? Model.surfaces(win.service.layers, win.monitor).filter(function(surface) {
-          return surface.namespace !== "omarchy-bar"
-        }) : [])
-      model: JSON.parse(surfaces)
-
-      delegate: ShaderEffectSource {
-        required property var modelData
-        x: modelData.x
-        y: modelData.y
-        width: modelData.w
-        height: modelData.h
-        z: 1050
-        sourceItem: screenGhost
-        sourceRect: Qt.rect(modelData.x, modelData.y, modelData.w, modelData.h)
-        live: false
-        hideSource: false
-        opacity: 1 - win.smooth(0, 0.22, win.p)
-        visible: opacity > 0.01 && screenGhost.hasContent
-      }
-    }
-
-    // Clicking the background goes back to the desktop.
-    MouseArea {
-      anchors.fill: parent
-      enabled: !!win.service && win.service.interactive
-      acceptedButtons: Qt.LeftButton | Qt.RightButton
-      onClicked: function(event) {
-        if (event.button === Qt.RightButton) {
-          win.service.close({})
-          win.service.openSettings("")
-        } else {
-          win.service.close({})
+      // Clicking the background goes back to the desktop.
+      MouseArea {
+        anchors.fill: parent
+        enabled: !!win.service && win.service.interactive
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
+        onClicked: function(event) {
+          if (event.button === Qt.RightButton) {
+            win.service.close({})
+            win.service.openSettings("")
+          } else {
+            win.service.close({})
+          }
         }
       }
-    }
 
-    // App names under each group of windows ("Group windows by application").
-    Repeater {
-      model: win.grouped ? win.groups : []
-      delegate: Row {
-        required property var modelData
-        spacing: 8
-        x: modelData.x + (modelData.w - width) / 2
-        y: modelData.y + modelData.h + 12
-        opacity: win.smooth(0.6, 1, win.p)
-        visible: opacity > 0.01
+      // App names under each group of windows ("Group windows by application").
+      Repeater {
+        model: win.grouped ? win.groups : []
+        delegate: Row {
+          required property var modelData
+          spacing: 8
+          x: modelData.x + (modelData.w - width) / 2
+          y: modelData.y + modelData.h + 12
+          opacity: win.smooth(0.6, 1, win.p)
+          visible: opacity > 0.01
+
+          IconImage {
+            source: modelData.icon
+            implicitSize: 30
+            anchors.verticalCenter: parent.verticalCenter
+            asynchronous: true
+          }
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: modelData.name
+            textFormat: Text.PlainText
+            color: "white"
+            font.family: win.uiFont
+            font.pixelSize: 14
+            font.weight: Font.DemiBold
+            style: Text.Raised
+            styleColor: Qt.rgba(0, 0, 0, 0.35)
+          }
+        }
+      }
+
+      // App Exposé: the app's name and icon at the top, and a line above the
+      // minimized windows.
+      Row {
+        visible: !!win.service && win.service.mode === "expose" && opacity > 0.01
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: win.edges.top + 30
+        spacing: 10
+        opacity: win.smooth(0.4, 1, win.p)
+        readonly property var app: win.service && win.service.exposeClass ? win.service.appFor(win.service.exposeClass) : null
 
         IconImage {
-          source: modelData.icon
-          implicitSize: 30
+          source: parent.app ? parent.app.icon : ""
+          implicitSize: 36
           anchors.verticalCenter: parent.verticalCenter
           asynchronous: true
         }
         Text {
           anchors.verticalCenter: parent.verticalCenter
-          text: modelData.name
+          text: parent.app ? parent.app.name : ""
           textFormat: Text.PlainText
           color: "white"
           font.family: win.uiFont
-          font.pixelSize: 14
+          font.pixelSize: 20
           font.weight: Font.DemiBold
-          style: Text.Raised
-          styleColor: Qt.rgba(0, 0, 0, 0.35)
         }
       }
-    }
 
-    // App Exposé: the app's name and icon at the top, and a line above the
-    // minimized windows.
-    Row {
-      visible: !!win.service && win.service.mode === "expose" && opacity > 0.01
-      anchors.horizontalCenter: parent.horizontalCenter
-      y: 30
-      spacing: 10
-      opacity: win.smooth(0.4, 1, win.p)
-      readonly property var app: win.service && win.service.exposeClass ? win.service.appFor(win.service.exposeClass) : null
-
-      IconImage {
-        source: parent.app ? parent.app.icon : ""
-        implicitSize: 36
-        anchors.verticalCenter: parent.verticalCenter
-        asynchronous: true
+      Rectangle {
+        visible: win.minimizedIds.length > 0 && !!win.service && win.service.mode === "expose"
+        x: win.edges.left + Math.round(win.stageWidth * 0.06)
+        width: win.stageWidth - win.edges.right - x - Math.round(win.stageWidth * 0.06)
+        y: win.stageHeight - win.edges.bottom - Math.round(win.stageHeight * 0.2) - 44
+        height: 1
+        color: Qt.rgba(1, 1, 1, 0.25)
+        opacity: win.smooth(0.5, 1, win.p)
       }
-      Text {
-        anchors.verticalCenter: parent.verticalCenter
-        text: parent.app ? parent.app.name : ""
-        textFormat: Text.PlainText
-        color: "white"
-        font.family: win.uiFont
-        font.pixelSize: 20
-        font.weight: Font.DemiBold
+
+      Repeater {
+        model: ScriptModel { values: win.tileIds }
+        delegate: WindowTile { overview: win }
       }
-    }
 
-    Rectangle {
-      visible: win.minimizedIds.length > 0 && !!win.service && win.service.mode === "expose"
-      x: Math.round(win.width * 0.06)
-      width: win.width - x * 2
-      y: win.height - Math.round(win.height * 0.2) - 44
-      height: 1
-      color: Qt.rgba(1, 1, 1, 0.25)
-      opacity: win.smooth(0.5, 1, win.p)
-    }
+      // While a desktop is renamed, a click anywhere but its name keeps the
+      // name and does nothing else. The Spaces bar is above this; its desktops
+      // and "+" turn their clicks off meanwhile, so theirs land here too.
+      MouseArea {
+        anchors.fill: parent
+        z: 1090
+        enabled: spacesBar.renamingDesktop !== 0
+        hoverEnabled: enabled
+        acceptedButtons: Qt.AllButtons
+        onPressed: spacesBar.commitRename()
+      }
 
-    Repeater {
-      model: ScriptModel { values: win.tileIds }
-      delegate: WindowTile { overview: win }
-    }
+      SpacesBar {
+        id: spacesBar
+        overview: win
+        visible: win.mission
+        z: 1100
+      }
 
-    // While a desktop is renamed, a click anywhere but its name keeps the
-    // name and does nothing else. The Spaces bar is above this; its desktops
-    // and "+" turn their clicks off meanwhile, so theirs land here too.
-    MouseArea {
-      anchors.fill: parent
-      z: 1090
-      enabled: spacesBar.renamingDesktop !== 0
-      hoverEnabled: enabled
-      acceptedButtons: Qt.AllButtons
-      onPressed: spacesBar.commitRename()
-    }
-
-    SpacesBar {
-      id: spacesBar
-      overview: win
-      visible: win.mission
-      z: 1100
-    }
-
-    Item {
-      id: keys
-      focus: true
-      Keys.onPressed: function(event) { win.handleKey(event) }
+      Item {
+        id: keys
+        focus: true
+        Keys.onPressed: function(event) { win.handleKey(event) }
+      }
     }
   }
 }

@@ -716,7 +716,8 @@ Item {
     if (!shown || revealed) return
     revealTimer.stop()
     revealed = true
-    if (!tracking && !closing) animateTo(1)
+    if (tracking) startCatchUp()
+    else if (!closing) animateTo(1)
   }
 
   function close(options) {
@@ -854,7 +855,33 @@ Item {
   // Following the fingers: the stage moves once a frame, not at each event.
   FrameAnimation {
     running: root.tracking && (root.swipeIntent === "open" || root.swipeIntent === "close")
-    onTriggered: root.progress = root.fingersProgress(root.swipeOrigin)
+    onTriggered: root.progress = root.trackedProgress(root.fingersProgress(root.swipeOrigin))
+  }
+
+  // A swipe's stage can only show once it's ready (`revealed`), and by then
+  // the fingers have gone some way. Rather than appear that far along, it
+  // starts from the desktop, where it was hidden, and catches up with the
+  // fingers over catchUpMs, easing in and out, then follows them exactly.
+  readonly property real catchUpMs: 150
+  property double catchUpStart: 0
+  property real catchUpFrom: 0
+
+  function startCatchUp() {
+    catchUpStart = Date.now()
+    catchUpFrom = progress
+  }
+
+  function trackedProgress(fingers) {
+    // Hidden, the stage waits at the start for the fingers.
+    if (!revealed) return 0
+    if (catchUpStart <= 0) return fingers
+    var t = (Date.now() - catchUpStart) / catchUpMs
+    if (t >= 1) {
+      catchUpStart = 0
+      return fingers
+    }
+    var k = t * t * (3 - 2 * t)
+    return catchUpFrom + (fingers - catchUpFrom) * k
   }
 
   function decideIntent() {
@@ -876,6 +903,7 @@ Item {
   function beginTracking(which, direction, intent) {
     progressAnim.stop()
     animating = false
+    catchUpStart = 0
     var fresh = !shown
     swipeIntent = intent
     swipeDirection = direction
@@ -884,7 +912,7 @@ Item {
     // Pick up from the current state, minus the travel shown so far.
     swipeOrigin = fresh ? 0 : progress - Gesture.shownTravel(swipeTrail, Date.now()) * direction / swipeDistance
     if (fresh) startMode(which, true)
-    progress = fingersProgress(swipeOrigin)
+    progress = trackedProgress(fingersProgress(swipeOrigin))
   }
 
   // Speed toward "open" at the moment the fingers lifted, in distance units
@@ -906,6 +934,7 @@ Item {
     swipeIntent = ""
     if (!tracking) return
     tracking = false
+    catchUpStart = 0
     var velocity = swipeVelocity(event.time)
     var perUnit = velocity / swipeDistance
     // Where the fingers were heading decides, then how far they got (they're
@@ -994,6 +1023,18 @@ Item {
   }
 
   // ---- startup ----------------------------------------------------------------------------
+
+  // Each display's stage warms up (Overview.warmUp) once the shell has
+  // settled after starting, and when the wallpaper changes.
+  Timer {
+    id: warmTimer
+    interval: 2500
+    onTriggered: root.refresh(function(ok) {
+      if (!ok || root.shown) return
+      for (var name in root.overviews) root.overviews[name].warmUp()
+    })
+  }
+  onWallpaperUrlChanged: if (wallpaperUrl !== "") warmTimer.restart()
 
   Component.onCompleted: {
     refreshWallpaper()

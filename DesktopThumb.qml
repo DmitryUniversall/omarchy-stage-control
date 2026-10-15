@@ -56,7 +56,7 @@ Item {
   // The name's room inside the pill, shown or being edited.
   readonly property real textWidth: Math.max(0, pillWidth - 26)
   width: Math.round(collapsedWidth + (thumbWidth - collapsedWidth) * ex)
-  height: strip ? strip.thumbH + 10 + strip.labelH : 0
+  height: strip ? strip.thumbH + strip.labelSpace : 0
 
   // The windows' previews are made once per opening and kept: the first time
   // the thumbnail shows, or when the stage has finished opening and it's
@@ -237,10 +237,18 @@ Item {
   }
 
   // Name: a glass pill under the thumbnail (or on its own when collapsed).
+  // With names hidden it shows over the thumbnail's bottom edge, only while
+  // the desktop is pointed at or renamed.
+  readonly property bool namesHidden: !!strip && strip.namesHidden
   Glass {
     id: pill
     anchors.horizontalCenter: parent.horizontalCenter
-    y: Math.round((thumb.strip ? thumb.strip.thumbH + 10 : 0) * thumb.ex)
+    y: thumb.namesHidden ? (thumb.strip ? thumb.strip.thumbH - height - 8 : 0)
+      : Math.round((thumb.strip ? thumb.strip.thumbH + 10 : 0) * thumb.ex)
+    z: 4
+    opacity: !thumb.namesHidden || thumb.renaming || (thumb.hovered && !thumb.beingDragged) ? 1 : 0
+    visible: opacity > 0.01
+    Behavior on opacity { NumberAnimation { duration: 140 } }
     width: thumb.pillWidth
     height: thumb.strip ? thumb.strip.labelH : 24
     radius: height / 2
@@ -297,14 +305,31 @@ Item {
     }
   }
 
-  HoverHandler {
-    id: hover
-    enabled: !!thumb.service && thumb.service.interactive
+  // Where the desktop takes the pointer: what it shows. Collapsed that's
+  // only its name; the room its thumbnail opens into stays clear, so the
+  // pointer there neither lights the name nor goes to the desktop. A
+  // desktop scrolled out of view takes nothing.
+  Item {
+    id: hitArea
+    width: parent.width
+    height: thumb.namesHidden ? (thumb.strip ? thumb.strip.thumbH : 0) : pill.y + pill.height
+    containmentMask: QtObject {
+      function contains(point: point): bool {
+        return point.x >= 0 && point.y >= 0 && point.x <= hitArea.width && point.y <= hitArea.height
+          && (!thumb.strip || thumb.strip.inView(hitArea, point))
+      }
+    }
+
+    HoverHandler {
+      id: hover
+      enabled: !!thumb.service && thumb.service.interactive
+    }
   }
 
   MouseArea {
     id: mouse
-    anchors.fill: parent
+    anchors.fill: hitArea
+    containmentMask: hitArea.containmentMask
     // Off while any desktop is renamed: a click then only keeps the name.
     enabled: !!thumb.service && thumb.service.interactive && !!thumb.strip && thumb.strip.renamingDesktop === 0
     acceptedButtons: Qt.LeftButton | Qt.RightButton

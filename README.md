@@ -10,11 +10,14 @@ Close windows, or swipe down for just the current app's windows.
 
 * **Follows your fingers.** The swipe is tracked 1:1, like macOS: windows fly
   out of their places as you move, and letting go finishes or cancels by how
-  far and how fast you swiped.
+  far and how fast you swiped. The stage is ready a few frames into the
+  swipe and eases in from your desktop to catch up with your fingers.
 * **Live previews** of every window on your desktop, and live thumbnails of
   your other desktops in the Spaces bar.
 * **Spaces bar.** Your desktops' names along the top; point at it (or drag a
-  window toward it) and it opens into live thumbnails.
+  window toward it) and it opens into live thumbnails. Or have it show the
+  thumbnails right away, with or without names. However many desktops you
+  have, the row scrolls (wheel or two fingers) once they no longer fit.
 * **Organize desktops.** Drag a window onto a desktop to move it there, or onto
   **+** for a new desktop. Drag desktops to reorder them. Hover one and click
   **×** to remove it; its windows move to the desktop before it (after it, for
@@ -32,8 +35,9 @@ Close windows, or swipe down for just the current app's windows.
 * **An icon in the top bar:** click it for Stage Control's settings,
   right-click to open the stage, middle-click for App Exposé.
 * **Seamless.** When the stage opens it starts from an exact picture of your
-  screen: title bars and borders ride along with their windows, and the bar
-  slides away instead of blinking out.
+  screen: title bars and borders ride along with their windows. The top bar
+  stays where it is, live and clickable, and the Spaces bar slides out from
+  under it.
 
 ## Screenshots
 
@@ -152,7 +156,8 @@ out of the bar, so your settings go with it.
 | `groupByApp` | `false` | group windows by application |
 | `windowTitles` | `hover` | `hover`, `always` (on hover when grouped by app), `never` |
 | `appIcons` | `true` | app icons on windows |
-| `spacesBar` | `auto` | `auto` (names; thumbnails on hover), `expanded` |
+| `spacesBar` | `auto` | `auto` (names; thumbnails on hover), `expanded` (thumbnails and names), `thumbnails` (thumbnails; a name while pointed at) |
+| `keepBar` | `true` | the stage opens below the top bar instead of covering it |
 | `renumberDesktops` | `true` | close the gap when a desktop is removed |
 | `closeButtons` | `true` | a close button on the window under the pointer |
 | `middleClickClose` | `true` | middle-click closes a window |
@@ -278,9 +283,9 @@ The Omarchy shell caches plugin QML, so after changing QML run
 
 ## Known limitations
 
-* The stage covers the bar and the dock while it's open; macOS keeps its Dock
-  visible. Stage Control announces itself on Hyprland's event socket (see
-  above), so a dock can choose to stay up.
+* With `keepBar` off, the stage covers the bar and the dock while it's open.
+  Stage Control announces itself on Hyprland's event socket (see above), so
+  a dock can choose to stay up.
 * Each display gets its own stage, but a window can't be dragged to another
   display's desktop.
 * A hot corner takes the clicks on its last two pixels.
