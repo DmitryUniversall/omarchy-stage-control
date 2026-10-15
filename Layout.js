@@ -225,14 +225,16 @@ function spread(windows, area, options) {
 // The Spaces bar's measurements: a bar `width` wide with `count` desktops, for
 // a display `aspect` (height / width) tall. Thumbnails are as large as macOS
 // makes them, but shrink until every desktop and the "+" (0.62 of a
-// thumbnail's height, at least 40) fit between the margins, and with many
-// desktops the gaps narrow too. Expanded, a desktop is as wide as its
-// thumbnail; collapsed, at most its share of the bar. So a long name is cut
-// short instead of pushing desktops off the screen. With very many desktops
-// (dozens) the gaps narrow further and desktops go below 24 pixels, so the
-// row still fits.
+// thumbnail's height, at least 40) fit between the margins. Expanded, a
+// desktop is as wide as its thumbnail; collapsed, at most its share of the
+// bar, so a long name is cut short instead of pushing desktops off the
+// screen. Thumbnails stop shrinking at MIN_THUMB and names at MIN_SLOT: past
+// that the row is wider than the bar, and the bar scrolls (SpacesBar.qml)
+// rather than showing desktops too small to tell apart.
 var BAR_MARGIN = 28    // from each edge of the screen
 var BAR_ADD_GAP = 20   // between the last desktop and the "+"
+var MIN_THUMB = 96     // the narrowest thumbnail
+var MIN_SLOT = 84      // the narrowest collapsed name
 
 function spacesBar(width, count, aspect) {
   var n = Math.max(1, Math.floor(count) || 1)
@@ -247,25 +249,41 @@ function spacesBar(width, count, aspect) {
   }
   var spacing = 26
   if (fit(spacing) < 100) spacing = 12
-  while (spacing > 2 && fit(spacing) < 24) spacing = Math.max(2, spacing - 4)
-  var thumbW = Math.max(1, Math.floor(Math.min(ideal, fit(spacing))))
+  var thumbW = Math.floor(Math.min(ideal, Math.max(MIN_THUMB, fit(spacing))))
   var thumbH = Math.round(thumbW * ratio)
   // Collapsed, each desktop gets its share of the row.
   function slot(gap) {
     return Math.floor((width - 2 * BAR_MARGIN - gap * (n - 1)) / n)
   }
   var collapsedSpacing = 12
-  while (collapsedSpacing > 2 && slot(collapsedSpacing) < 24) collapsedSpacing = Math.max(2, collapsedSpacing - 4)
   return {
     thumbW: thumbW,
     thumbH: thumbH,
     add: Math.round(Math.max(40, thumbH * 0.62)),
     spacing: spacing,
     collapsedSpacing: collapsedSpacing,
-    collapsedSlot: Math.max(1, slot(collapsedSpacing)),
+    collapsedSlot: Math.max(MIN_SLOT, slot(collapsedSpacing)),
     margin: BAR_MARGIN,
     addGap: BAR_ADD_GAP
   }
+}
+
+// Where a row `content` wide sits in a view `view` wide that it may
+// overflow: centered when it fits, else scrolled `fraction` (0 to 1) of the
+// way from its left end to its right end. Returns the row's offset from the
+// view's left edge.
+function scrolledOffset(content, view, fraction) {
+  if (content <= view) return (view - content) / 2
+  var f = Math.max(0, Math.min(1, fraction || 0))
+  return -(content - view) * f
+}
+
+// The scroll fraction that puts the span [left, right] of a row `content`
+// wide in the middle of a view `view` wide (as far as the row's ends allow).
+function fractionToShow(content, view, left, right) {
+  if (content <= view) return 0
+  var center = (left + right) / 2
+  return Math.max(0, Math.min(1, (center - view / 2) / (content - view)))
 }
 
 // The slot ({ id, center }) whose center lies nearest `x`: where a desktop

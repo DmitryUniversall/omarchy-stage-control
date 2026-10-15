@@ -510,11 +510,25 @@ Item {
 
         SectionLabel { text: "Spaces bar" }
         ButtonGroup {
-          options: [{ value: "auto", label: "Names, thumbnails on hover" }, { value: "expanded", label: "Always show thumbnails" }]
+          options: [{ value: "auto", label: "Names" }, { value: "expanded", label: "Thumbnails" }, { value: "thumbnails", label: "Thumbnails, no names" }]
           value: root.settings.spacesBar || "auto"
           onChanged: function(v) { root.set("spacesBar", v) }
         }
-        Caption { text: "Right-click a desktop in the Spaces bar to rename it." }
+        Caption {
+          text: (root.settings.spacesBar || "auto") === "auto"
+            ? "The desktops' names; point at them for thumbnails. Right-click a desktop to rename it."
+            : (root.settings.spacesBar === "thumbnails"
+              ? "Thumbnails of every desktop right away; a desktop's name shows while you point at it. Right-click a desktop to rename it."
+              : "Thumbnails of every desktop right away, with their names. Right-click a desktop to rename it.")
+        }
+
+        Toggle {
+          width: parent.width
+          label: "Keep the top bar"
+          description: "The stage opens below the top bar, which stays as it is and can be clicked. Turned off, the stage covers the whole screen and the bar slides away."
+          checked: root.settings.keepBar !== false
+          onClicked: root.set("keepBar", root.settings.keepBar === false)
+        }
 
         Toggle {
           width: parent.width

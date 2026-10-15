@@ -4,9 +4,12 @@ import "Layout.js" as Layout
 
 // The Spaces bar along the top of the stage. Like macOS it shows the
 // desktops' names and expands into thumbnails when the pointer comes up to it
-// or a window is dragged toward it. The "+" on the right adds a desktop; drop
-// a window on it to put the window on a new desktop. Right-click a desktop to
-// rename it.
+// or a window is dragged toward it; or, as you set it, always shows the
+// thumbnails, with or without the names under them. The "+" on the right
+// adds a desktop; drop a window on it to put the window on a new desktop.
+// Right-click a desktop to rename it. When the desktops don't all fit, the
+// row scrolls: with the wheel or two fingers over the bar, and by itself
+// toward the end a window is dragged to.
 Item {
   id: bar
 
@@ -19,18 +22,26 @@ Item {
   readonly property real e: settings.reduceMotion ? 1 : p
   readonly property int count: overview ? overview.desktopIds.length : 0
 
-  // Sized so every desktop and the "+" fit on the screen (Layout.spacesBar).
+  // "auto" (names, thumbnails on hover), "expanded" (thumbnails and names)
+  // or "thumbnails" (thumbnails, a name only while pointed at or renamed).
+  readonly property string mode: settings.spacesBar || "auto"
+  readonly property bool namesHidden: mode === "thumbnails"
+
+  // Sized so every desktop and the "+" fit on the screen, down to a
+  // smallest size; past that the row scrolls (Layout.spacesBar).
   readonly property var metrics: Layout.spacesBar(width, count, monitor ? monitor.h / Math.max(1, monitor.w) : 0.625)
   readonly property real thumbW: metrics.thumbW
   readonly property real thumbH: metrics.thumbH
   // The most a desktop's name may take while the bar is collapsed.
   readonly property real collapsedSlot: metrics.collapsedSlot
   readonly property real labelH: 24
+  // Under each thumbnail: its name, unless names are hidden.
+  readonly property real labelSpace: namesHidden ? 0 : 10 + labelH
   readonly property real inset: 14
   readonly property real collapsedHeight: inset + labelH + 16
-  readonly property real expandedHeight: inset + thumbH + 10 + labelH + 18
+  readonly property real expandedHeight: inset + thumbH + labelSpace + 18
 
-  readonly property bool expanded: settings.spacesBar === "expanded" || hover.hovered
+  readonly property bool expanded: mode !== "auto" || hover.hovered
     || (!!overview && (overview.dragging || overview.forceExpanded)) || draggingDesktop !== 0
     || renamingDesktop !== 0
   property real expand: expanded ? 1 : 0
@@ -39,11 +50,15 @@ Item {
   // The space the spread must leave free (the target, not the animation).
   readonly property real reservedHeight: expanded ? expandedHeight : collapsedHeight
 
-  width: overview ? overview.width : 0
+  // Between the screen's edges that stay uncovered (Overview.edges): with the
+  // top bar kept, the Spaces bar slides out from under it.
+  readonly property var edges: overview ? overview.edges : ({ top: 0, left: 0, right: 0, bottom: 0 })
+  x: edges.left
+  width: overview ? overview.stageWidth - edges.left - edges.right : 0
   height: collapsedHeight + (expandedHeight - collapsedHeight) * expand
   // Slides down from the top edge as the stage opens. Drawn while the stage
   // prepares, so its glass is ready by the first frame (Overview.preparing).
-  y: -Math.round(height * 0.7 * (1 - e))
+  y: edges.top - Math.round(height * 0.7 * (1 - e))
   opacity: overview && overview.preparing ? 0.5 : e
 
   HoverHandler {
@@ -58,18 +73,135 @@ Item {
   function registerThumb(id, item) { thumbs[id] = item }
   function unregisterThumb(id, item) { if (thumbs[id] === item) delete thumbs[id] }
 
-  Row {
-    id: row
-    // Centered, but clear of the screen's edges and, as the bar opens, of
-    // the "+" on the right.
-    x: Math.round(Math.max(bar.metrics.margin, Math.min((bar.width - width) / 2,
-      bar.width - bar.metrics.margin - (addButton.width + bar.metrics.addGap) * bar.expand - width)))
-    y: bar.inset
-    spacing: Math.round(bar.metrics.collapsedSpacing + (bar.metrics.spacing - bar.metrics.collapsedSpacing) * bar.expand)
+  // The room the desktops have: between the margins, clear of the "+" on
+  // the right as the bar opens.
+  readonly property real viewLeft: metrics.margin
+  readonly property real viewWidth: Math.max(0, width - 2 * metrics.margin - (addButton.width + metrics.addGap) * expand)
+  readonly property bool scrolls: row.width > viewWidth + 0.5
 
-    Repeater {
-      model: ScriptModel { values: bar.overview ? bar.overview.desktopIds : [] }
-      delegate: DesktopThumb { strip: bar }
+  Item {
+    id: viewport
+    // A little past the margins, for a desktop's × and its hover zoom.
+    readonly property real pad: 14
+    x: bar.viewLeft - pad
+    width: bar.viewWidth + 2 * pad
+    // Tall enough for the thumbnails' shadows.
+    height: bar.height + 40
+    // Clipped only while it scrolls, so a row that fits draws as before.
+    clip: bar.scrolls
+
+    Row {
+      id: row
+      // Centered, but clear of the screen's edges and, as the bar opens, of
+      // the "+" on the right. Scrolled when it doesn't fit.
+      x: Math.round(viewport.pad + (bar.scrolls
+        ? Layout.scrolledOffset(width, bar.viewWidth, bar.scrollFraction)
+        : Math.max(0, Math.min((bar.width - width) / 2 - bar.viewLeft, bar.viewWidth - width))))
+      y: bar.inset
+      spacing: Math.round(bar.metrics.collapsedSpacing + (bar.metrics.spacing - bar.metrics.collapsedSpacing) * bar.expand)
+
+      Repeater {
+        model: ScriptModel { values: bar.overview ? bar.overview.desktopIds : [] }
+        delegate: DesktopThumb { strip: bar }
+      }
+    }
+  }
+
+  // ---- scrolling --------------------------------------------------------------
+  //
+  // How far along the row is scrolled, from 0 (its left end) to 1 (its right
+  // end): a fraction rather than pixels, so the same desktops stay in view
+  // while the bar expands and collapses.
+
+  property real scrollTarget: 0
+  property bool animateScroll: false
+  property real scrollFraction: scrollTarget
+  Behavior on scrollFraction {
+    enabled: bar.animateScroll
+    NumberAnimation { duration: 240; easing.type: Easing.OutCubic }
+  }
+
+  function scrollBy(pixels, animated) {
+    var over = row.width - viewWidth
+    if (over <= 0) return
+    animateScroll = animated === true
+    scrollTarget = Math.max(0, Math.min(1, scrollTarget + pixels / over))
+  }
+
+  // Brings a desktop to the middle of the bar, as far as the row allows.
+  function showDesktop(id, animated) {
+    var thumb = thumbs[id]
+    if (!thumb) return
+    // Desktops just added may not be in place yet.
+    row.forceLayout()
+    animateScroll = animated === true
+    scrollTarget = Layout.fractionToShow(row.width, viewWidth, thumb.x, thumb.x + thumb.width)
+  }
+
+  // Whether `point` in `item`'s coordinates lies where the bar shows its
+  // desktops: a desktop scrolled out of view takes no pointer.
+  function inView(item, point) {
+    if (!scrolls) return true
+    var at = item.mapToItem(viewport, point.x, point.y)
+    return at.x >= viewport.pad && at.x <= viewport.pad + viewWidth
+  }
+
+  WheelHandler {
+    target: null
+    enabled: bar.scrolls && !!bar.service && bar.service.interactive
+    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+    onWheel: function(event) {
+      var px = event.pixelDelta
+      if (px.x !== 0 || px.y !== 0) {
+        // Two fingers: the row follows them, either way they move.
+        bar.scrollBy(-(Math.abs(px.x) > Math.abs(px.y) ? px.x : px.y), false)
+      } else {
+        var steps = (Math.abs(event.angleDelta.x) > Math.abs(event.angleDelta.y) ? event.angleDelta.x : event.angleDelta.y) / 120
+        bar.scrollBy(-steps * Math.max(bar.thumbW, bar.collapsedSlot) * 0.75, true)
+      }
+    }
+  }
+
+  // The desktop on screen is in view when the stage opens.
+  Connections {
+    target: bar.overview
+    function onShowsHereChanged() {
+      if (bar.overview.showsHere) Qt.callLater(bar.showActive, false)
+    }
+  }
+  function showActive(animated) {
+    if (monitor) showDesktop(monitor.activeWorkspace, animated)
+  }
+  property int shownActive: monitor ? monitor.activeWorkspace : 0
+  onShownActiveChanged: if (scrolls) Qt.callLater(showActive, true)
+  // A desktop just added is the last one, next to the "+". (Not one that
+  // came with the stage opening: that shows the desktop on screen.)
+  property int lastCount: 0
+  onCountChanged: {
+    var added = count > lastCount && lastCount > 0 && !!overview && overview.showsHere
+    lastCount = count
+    if (added && scrolls) {
+      animateScroll = true
+      scrollTarget = 1
+    }
+  }
+
+  // Dragging a window toward either end of a row that doesn't fit scrolls
+  // it, the faster the nearer the edge.
+  FrameAnimation {
+    running: bar.scrolls && !!bar.overview && bar.overview.dragging
+    onTriggered: {
+      var at = bar.mapFromItem(bar.overview.stage, bar.overview.dragPoint.x, bar.overview.dragPoint.y)
+      if (at.y < 0 || at.y > bar.height + 40) return
+      var edge = 80
+      var left = at.x - bar.viewLeft
+      var right = bar.viewLeft + bar.viewWidth - at.x
+      var speed = left < edge ? -(edge - Math.max(0, left)) / edge
+        : right < edge ? (edge - Math.max(0, right)) / edge : 0
+      if (speed === 0) return
+      bar.scrollBy(speed * 1100 * frameTime, false)
+      // What the window would land on moved under it.
+      bar.overview.moveDrag(bar.overview.dragPoint)
     }
   }
 
@@ -236,6 +368,8 @@ Item {
     if (point.x >= add.x - pad && point.x <= add.x + addButton.width + pad
         && point.y >= add.y - pad && point.y <= add.y + addButton.height + pad)
       return { kind: "new" }
+    // Not on a desktop scrolled out of view.
+    if (!inView(overview.stage, point)) return null
     for (var id in thumbs) {
       var rect = thumbs[id].pictureRect()
       if (point.x >= rect.x - pad && point.x <= rect.x + rect.w + pad

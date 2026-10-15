@@ -159,7 +159,8 @@ passed++;
 }
 
 // Layout.spacesBar() as it was before it learned to fit dozens of desktops:
-// up to 20 desktops it must still give exactly these metrics.
+// while its thumbnails and names were no smaller than the new minimums, it
+// must still give exactly these sizes.
 function spacesBarUpTo20(width, count, aspect) {
   const n = Math.max(1, Math.floor(count) || 1);
   const ratio = aspect > 0 ? aspect : 0.625;
@@ -182,10 +183,10 @@ function spacesBarUpTo20(width, count, aspect) {
   };
 }
 
-// The Spaces bar fits every desktop and the "+" on the screen, however many
-// desktops there are (ten on a 1800-pixel laptop once pushed the first three
-// off the left edge, and 36 on a 1280-pixel screen ran past both edges), and
-// keeps its macOS size when there's room.
+// The Spaces bar fits every desktop and the "+" on the screen while the
+// thumbnails can stay at least MIN_THUMB wide (and the names MIN_SLOT), and
+// keeps its macOS size when there's room. Past that the desktops keep that
+// size and the bar scrolls instead of shrinking them to slivers.
 {
   for (const width of [1024, 1280, 1366, 1440, 1512, 1800, 1811, 1920, 2560, 3440, 3840]) {
     for (const aspect of [0.5625, 0.625, 2 / 3, 0.75, 0.4]) {
@@ -193,14 +194,20 @@ function spacesBarUpTo20(width, count, aspect) {
         const m = plain(Layout.spacesBar(width, count, aspect));
         const label = `spaces bar ${width}px, ${count} desktops, aspect ${aspect.toFixed(3)}`;
         const expanded = count * m.thumbW + (count - 1) * m.spacing + m.addGap + m.add + 2 * m.margin;
-        assert.ok(expanded <= width, `${label}: thumbnails and the "+" fit (${expanded} > ${width})`);
+        if (m.thumbW > Layout.MIN_THUMB) assert.ok(expanded <= width, `${label}: thumbnails and the "+" fit (${expanded} > ${width})`);
+        else assert.equal(m.thumbW, Layout.MIN_THUMB, `${label}: thumbnails stop shrinking and the bar scrolls`);
         const collapsed = count * m.collapsedSlot + (count - 1) * m.collapsedSpacing + 2 * m.margin;
-        assert.ok(collapsed <= width, `${label}: names fit`);
+        if (m.collapsedSlot > Layout.MIN_SLOT) assert.ok(collapsed <= width, `${label}: names fit`);
+        else assert.equal(m.collapsedSlot, Layout.MIN_SLOT, `${label}: names stop shrinking and the bar scrolls`);
         assert.equal(m.thumbH, Math.round(m.thumbW * aspect), `${label}: thumbnails keep the display's shape`);
         assert.ok(m.thumbW <= 236, `${label}: never larger than macOS's`);
-        assert.ok(m.thumbW >= 1 && m.collapsedSlot >= 1, `${label}: every desktop keeps some width`);
-        assert.ok(m.spacing >= 2 && m.collapsedSpacing >= 2, `${label}: desktops never touch`);
-        if (count <= 20) assert.deepEqual(m, spacesBarUpTo20(width, count, aspect), `${label}: as before up to 20 desktops`);
+        assert.ok(m.spacing >= 12 && m.collapsedSpacing >= 12, `${label}: desktops never crowd`);
+        const before = spacesBarUpTo20(width, count, aspect);
+        if (before.thumbW >= Layout.MIN_THUMB) {
+          assert.equal(m.thumbW, before.thumbW, `${label}: thumbnails as before`);
+          assert.equal(m.spacing, before.spacing, `${label}: gaps as before`);
+        }
+        if (before.collapsedSlot >= Layout.MIN_SLOT) assert.equal(m.collapsedSlot, before.collapsedSlot, `${label}: names as before`);
       }
     }
   }
@@ -210,8 +217,26 @@ function spacesBarUpTo20(width, count, aspect) {
   // The laptop that showed the bug: ten desktops on 1800 x 1200.
   const laptop = plain(Layout.spacesBar(1800, 10, 1200 / 1800));
   assert.ok(laptop.thumbW >= 120, "laptop: ten desktops still get usable thumbnails");
-  // Many desktops: the gaps narrow before the thumbnails get tiny.
+  // Nine desktops on that laptop fit without scrolling.
+  const nine = plain(Layout.spacesBar(1800, 9, 1200 / 1800));
+  assert.ok(9 * nine.thumbW + 8 * nine.spacing + nine.addGap + nine.add + 2 * nine.margin <= 1800, "laptop: nine desktops fit");
+  // Many desktops: the gaps narrow, then the bar scrolls.
   assert.equal(Layout.spacesBar(1280, 16, 0.625).spacing, 12);
+  assert.equal(Layout.spacesBar(1280, 16, 0.625).thumbW, Layout.MIN_THUMB);
+  passed++;
+}
+
+// A row that fits is centered; one that doesn't scrolls between its ends,
+// and the desktop to show is brought to the middle as far as the ends allow.
+{
+  assert.equal(Layout.scrolledOffset(400, 1000, 0.7), 300, "fits: centered, the scroll ignored");
+  assert.equal(Layout.scrolledOffset(1500, 1000, 0), -0, "left end");
+  assert.equal(Layout.scrolledOffset(1500, 1000, 1), -500, "right end");
+  assert.equal(Layout.scrolledOffset(1500, 1000, 2), -500, "clamped");
+  assert.equal(Layout.fractionToShow(400, 1000, 0, 100), 0, "fits: no scroll");
+  assert.equal(Layout.fractionToShow(1500, 1000, 700, 800), 0.5, "middle of the row: halfway");
+  assert.equal(Layout.fractionToShow(1500, 1000, 0, 100), 0, "near the left end: the left end");
+  assert.equal(Layout.fractionToShow(1500, 1000, 1400, 1500), 1, "near the right end: the right end");
   passed++;
 }
 
