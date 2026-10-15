@@ -493,6 +493,20 @@ Item {
           onClicked: root.set("groupByApp", root.settings.groupByApp !== true)
         }
 
+        SectionLabel { text: "Window under the pointer" }
+        ButtonGroup {
+          options: [{ value: "always", label: "Highlight" }, { value: "moved", label: "Once the pointer moves" }, { value: "never", label: "Don't highlight" }]
+          value: root.settings.windowHighlight || "always"
+          onChanged: function(v) { root.set("windowHighlight", v) }
+        }
+        Caption {
+          text: (root.settings.windowHighlight || "always") === "moved"
+            ? "A window the stage brings under the pointer (as it opens, or as desktops slide or follow a swipe) isn't highlighted until you move the pointer."
+            : (root.settings.windowHighlight === "never"
+              ? "No lift or outline on the window under the pointer. A window picked with the arrow keys or Tab is still outlined."
+              : "The window under the pointer lifts a little and gets an outline in the highlight color.")
+        }
+
         SectionLabel { text: "Window titles" }
         ButtonGroup {
           options: [{ value: "hover", label: "On hover" }, { value: "always", label: "Always" }, { value: "never", label: "Never" }]
@@ -595,7 +609,7 @@ Item {
         }
 
         SectionLabel { text: "Swipe between desktops" }
-        Caption { text: "Swipe left or right to move between desktops. Leave this off if your Hyprland config already has a workspace swipe." }
+        Caption { text: "Swipe left or right to move between desktops. On the open stage the desktops follow your fingers, like Hyprland's own swipe does outside it. Hyprland allows one gesture per finger count, so take the workspace swipe for these fingers out of your Hyprland config (or leave this off)." }
         ButtonGroup {
           options: [{ value: "0", label: "Off" }, { value: "3", label: "3 fingers" }, { value: "4", label: "4 fingers" }, { value: "5", label: "5 fingers" }]
           value: String(root.settings.desktopSwipeFingers || 0)

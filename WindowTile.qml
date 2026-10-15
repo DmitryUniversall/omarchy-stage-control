@@ -24,7 +24,11 @@ Item {
   readonly property bool onScreen: !!info && info.onScreen
   readonly property bool hovered: !!overview && overview.hoverAddress === modelData
   readonly property bool selected: !!overview && overview.selectedAddress === modelData
-  readonly property bool lit: (hovered || selected) && !!service && service.interactive && !dragging && !dropping && !closingOut
+  // Pointed at or picked from the keyboard: shows its title (with titles on
+  // hover). `lit` adds the lift and the highlight outline, which the
+  // pointer only gives as windowHighlight allows; the keyboard always does.
+  readonly property bool active: (hovered || selected) && !!service && service.interactive && !dragging && !dropping && !closingOut
+  readonly property bool lit: active && (selected || (!!overview && overview.windowHighlight !== "never"))
   readonly property bool exiting: !!service && service.exitAddress === modelData
   readonly property bool dragging: !!overview && overview.dragAddress === modelData
   readonly property bool hasContent: capture.hasContent
@@ -104,12 +108,82 @@ Item {
     }
   }
 
+  // Switching desktops on the open stage (Overview, "sliding desktops"):
+  // the window slides out with the desktop it's on, or in with the new one.
+  // A shift on top of where it is, so the slide leaves its place, its
+  // hover zoom and its layout animations alone.
+  readonly property bool leaving: !!info && info.leaving === true
+  // A window of another desktop, waiting off the screen's edge for a swipe
+  // (Overview, "swiping between desktops"), with one picture rather than a
+  // live preview.
+  readonly property bool peek: !!info && info.peek === true
+  property real slideX: 0
+  // The swipe moves every tile at once (Overview.trackX).
+  transform: Translate { x: tile.slideX + (tile.overview ? tile.overview.trackX : 0) }
+  NumberAnimation {
+    id: slideAnimation
+    target: tile
+    property: "slideX"
+    easing.type: Easing.OutCubic
+  }
+
+  function slideTo(target, duration) {
+    slideAnimation.stop()
+    slideAnimation.from = slideX
+    slideAnimation.to = target
+    slideAnimation.duration = duration
+    slideAnimation.start()
+  }
+
+  // Straight to `offset` (a peeking window's place beside the screen),
+  // unless it's on its way somewhere.
+  // A fresh picture for a waiting window, as a swipe starts.
+  function refreshPreview() {
+    if (capture.captureSource) capture.captureFrame()
+  }
+
+  function placeAt(offset) {
+    if (!slideAnimation.running) slideX = offset
+  }
+
+  // Moves by `shift` while the swipe's own shift (Overview.trackX) moves
+  // back by as much, so the window stays where it is on screen. One on its
+  // way somewhere keeps going there, as far again.
+  function shiftBy(shift) {
+    if (!slideAnimation.running) {
+      slideX += shift
+      return
+    }
+    var target = slideAnimation.to + shift
+    var left = Math.max(60, slideAnimation.duration * (1 - Math.min(1, slideAnimation.currentTime / Math.max(1, slideAnimation.duration))))
+    slideAnimation.stop()
+    slideX += shift
+    slideTo(target, left)
+  }
+
+  // In from `offset`, or, for a window already off its place (on its way
+  // out, or waiting beside the screen during a swipe), from where it is.
+  function slideIn(offset, duration) {
+    if (!slideAnimation.running && Math.abs(slideX) < 0.5) slideX = offset
+    slideTo(0, duration)
+  }
+
+  Component.onCompleted: {
+    if (!overview) return
+    overview.registerTile(modelData, tile)
+    if (peek) placeAt(info.peekPage * overview.pageShift)
+    var offset = overview.takeSlideIn(modelData)
+    if (offset !== undefined) slideIn(offset, overview.slideDuration)
+  }
+
   // Tiles outlive a closed stage (Overview.rebuild()): the next opening
   // starts them afresh.
   Connections {
     target: tile.overview
     function onShowsHereChanged() {
       if (tile.overview.showsHere) return
+      slideAnimation.stop()
+      tile.slideX = 0
       dropAnimation.stop()
       tile.dropping = false
       closeTimeout.stop()
@@ -206,7 +280,9 @@ Item {
       // are the ones with the least time to spare. The window flies with the
       // frame it has and comes alive again when it lands. While the fingers
       // hold the stage, it stays live.
-      live: !!tile.overview && tile.overview.showsHere && !(tile.service && tile.service.animating)
+      // Nor while desktops slide or follow a swipe (Overview.moving).
+      live: !!tile.overview && tile.overview.showsHere && !(tile.service && tile.service.animating) && !tile.overview.moving
+        && !tile.peek
     }
   }
 
@@ -250,7 +326,7 @@ Item {
     id: titlePill
     readonly property string titles: tile.overview ? tile.overview.windowTitles : "hover"
     readonly property bool wanted: !!tile.info && tile.title !== "" && !tile.dragging && !tile.dropping
-      && ((titles === "always" && !tile.overview.grouped) || (titles !== "never" && tile.lit))
+      && ((titles === "always" && !tile.overview.grouped) || (titles !== "never" && tile.active))
     anchors.horizontalCenter: frame.horizontalCenter
     anchors.top: frame.bottom
     anchors.topMargin: badge.visible ? badge.size / 2 + 6 : 10
@@ -282,7 +358,7 @@ Item {
   MouseArea {
     id: mouse
     anchors.fill: frame
-    enabled: !!tile.service && tile.service.interactive && !tile.dropping
+    enabled: !!tile.service && tile.service.interactive && !tile.dropping && !tile.leaving && !tile.peek
     hoverEnabled: true
     acceptedButtons: Qt.LeftButton | Qt.MiddleButton
     cursorShape: tile.dragging ? Qt.ClosedHandCursor : Qt.PointingHandCursor
@@ -318,7 +394,17 @@ Item {
 
   function hoverIn() {
     hoverGrace.stop()
+    // Brought under a pointer that hasn't moved: not yet (Overview.hoverHeld).
+    if (overview.hoverHeld) return
     overview.hoverAddress = modelData
+  }
+
+  // The pointer moved: the window it's on takes it now.
+  Connections {
+    target: tile.overview
+    function onHoverHeldChanged() {
+      if (!tile.overview.hoverHeld && (mouse.containsMouse || closeMouse.containsMouse)) tile.hoverIn()
+    }
   }
 
   function hoverOut() {
@@ -397,6 +483,5 @@ Item {
     }
   }
 
-  Component.onCompleted: if (overview) overview.registerTile(modelData, tile)
   Component.onDestruction: if (overview) overview.unregisterTile(modelData, tile)
 }
