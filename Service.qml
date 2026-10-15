@@ -545,6 +545,8 @@ Item {
   // dropped, and is then planned from a fresh read of Hyprland, since the
   // windows have moved.
   property var planQueue: []
+  // Moves under way or waiting (the Spaces bar holds a reorder until done).
+  readonly property bool plansBusy: planRun.running || planQueue.length > 0
 
   function whenPlansDone(action) {
     if (planRun.running || planQueue.length > 0) planQueue = planQueue.concat([action])

@@ -146,6 +146,12 @@ Item {
     if (!slideAnimation.running) slideX = offset
   }
 
+  // Straight to `offset`, whatever it was doing.
+  function settleAt(offset) {
+    slideAnimation.stop()
+    slideX = offset
+  }
+
   // Moves by `shift` while the swipe's own shift (Overview.trackX) moves
   // back by as much, so the window stays where it is on screen. One on its
   // way somewhere keeps going there, as far again.

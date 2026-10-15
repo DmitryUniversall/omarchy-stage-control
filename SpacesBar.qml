@@ -245,19 +245,49 @@ Item {
 
   // ---- reordering desktops ------------------------------------------------------
 
+  // The dragged desktop follows the pointer, and the desktops between where
+  // it was and where it would land move aside at once to make room for it
+  // (makeRoom). Let go, it settles into that room and everything holds
+  // still there until Hyprland has moved the windows (`settling`): the
+  // thumbnails stay where they are (desktop 3 is always the third) and
+  // their windows change places, so going back first would show every
+  // desktop jump back and forth.
+
   property int draggingDesktop: 0
   property real desktopDragStart: 0
   property real desktopDragOffset: 0
   property int reorderTargetId: 0
+  property bool settling: false
+  // Off for the moment the arrangement goes back to rest under the moved
+  // windows, so nothing slides then.
+  property bool roomAnimated: true
+
+  // How far a desktop moves aside: one desktop and the gap after it.
+  readonly property real roomStep: thumbW + metrics.spacing
 
   function beginDesktopDrag(id, x) {
+    settleTimeout.stop()
+    settling = false
+    roomAnimated = true
     draggingDesktop = id
     desktopDragStart = x
     desktopDragOffset = 0
     reorderTargetId = 0
   }
 
+  // How far desktop `id` moves aside for the one dragged to reorderTargetId.
+  function makeRoom(id) {
+    if (draggingDesktop === 0 || reorderTargetId === 0 || id === draggingDesktop) return 0
+    var ids = overview ? overview.desktopIds : []
+    var from = ids.indexOf(draggingDesktop), to = ids.indexOf(reorderTargetId), at = ids.indexOf(id)
+    if (from < 0 || to < 0 || at < 0) return 0
+    if (to > from && at > from && at <= to) return -roomStep
+    if (to < from && at >= to && at < from) return roomStep
+    return 0
+  }
+
   function moveDesktopDrag(x) {
+    if (settling) return
     desktopDragOffset = x - desktopDragStart
     var dragged = thumbs[draggingDesktop]
     if (!dragged) return
@@ -277,14 +307,45 @@ Item {
   function endDesktopDrag() {
     var from = draggingDesktop
     var to = reorderTargetId
-    cancelDesktopDrag()
-    if (from && to && from !== to) service.reorderDesktop(overview.screenName, from, to)
+    if (!from || !to || from === to) {
+      cancelDesktopDrag()
+      return
+    }
+    // Into the room made for it, and held there until the windows move.
+    var ids = overview.desktopIds
+    desktopDragOffset = (ids.indexOf(to) - ids.indexOf(from)) * roomStep
+    settling = true
+    settleTimeout.restart()
+    service.reorderDesktop(overview.screenName, from, to)
   }
 
   function cancelDesktopDrag() {
+    settleTimeout.stop()
+    settling = false
     draggingDesktop = 0
     desktopDragOffset = 0
     reorderTargetId = 0
+  }
+
+  // The windows have moved: every thumbnail back to its place at once,
+  // where it now shows what was dragged there.
+  function finishSettling() {
+    if (!settling) return
+    roomAnimated = false
+    cancelDesktopDrag()
+    Qt.callLater(function() { bar.roomAnimated = true })
+  }
+
+  Connections {
+    target: bar.service
+    function onSnapVersionChanged() { if (bar.settling && !bar.service.plansBusy) bar.finishSettling() }
+  }
+
+  // Hyprland didn't move them (nothing to move, say): back anyway.
+  Timer {
+    id: settleTimeout
+    interval: 1500
+    onTriggered: bar.finishSettling()
   }
 
   // ---- renaming desktops ----------------------------------------------------------
