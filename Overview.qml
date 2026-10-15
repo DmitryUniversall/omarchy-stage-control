@@ -99,7 +99,12 @@ PanelWindow {
   exclusionMode: ExclusionMode.Ignore
   WlrLayershell.namespace: "marcho78-stage-control"
   WlrLayershell.layer: service && service.testMode ? WlrLayer.Background : WlrLayer.Overlay
-  WlrLayershell.keyboardFocus: showsHere && !!service && !service.testMode && monitor.focused
+  // The keys, while the stage is up, and given back as soon as it starts to
+  // close: Hyprland then gives them to the window under the stage, which
+  // turns active again, border and all, while the stage still covers it.
+  // Given back only once the stage was gone, the window's border visibly
+  // went from inactive to active just as it showed.
+  WlrLayershell.keyboardFocus: showsHere && !!service && !service.testMode && !service.closing && monitor.focused
     ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
   function smooth(edge0, edge1, x) {

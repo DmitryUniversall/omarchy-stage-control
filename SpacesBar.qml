@@ -210,7 +210,10 @@ Item {
   // Each desktop's thumbnail starts a capture of every window on it. Once the
   // stage has opened they start one desktop a frame, the one on screen first
   // and then outward, rather than all on the frame the stage settles.
-  // Pointing at the bar starts any that are left at once.
+  // Pointing at the bar starts any that are left at once. With
+  // previewsWhileOpening they take their turns from the stage's first frame
+  // on screen instead, so the desktops fill in while it opens, at the cost of
+  // those captures on the frames of the opening.
 
   readonly property var previewOrder: {
     var ids = overview ? overview.desktopIds : []
@@ -232,8 +235,8 @@ Item {
   // Only for this display's own stage: `settled` is the service's, so it's
   // also true while App Exposé is open on another display.
   FrameAnimation {
-    running: !!bar.overview && bar.overview.showsHere && bar.overview.mission && bar.overview.settled
-      && bar.previewTurns < bar.count
+    running: !!bar.overview && bar.overview.showsHere && bar.overview.mission && bar.previewTurns < bar.count
+      && (bar.overview.settled || (bar.settings.previewsWhileOpening === true && !!bar.service && bar.service.revealed))
     onTriggered: bar.previewTurns++
   }
 

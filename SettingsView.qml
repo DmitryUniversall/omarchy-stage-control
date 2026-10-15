@@ -538,6 +538,14 @@ Item {
 
         Toggle {
           width: parent.width
+          label: "Fill in desktops while the stage opens"
+          description: "The other desktops' thumbnails show their windows during the opening animation. Off, they fill in once the stage has opened, which keeps the opening lighter on the GPU."
+          checked: root.settings.previewsWhileOpening === true
+          onClicked: root.set("previewsWhileOpening", root.settings.previewsWhileOpening !== true)
+        }
+
+        Toggle {
+          width: parent.width
           label: "Keep the top bar"
           description: "The stage opens below the top bar, which stays as it is and can be clicked. Turned off, the stage covers the whole screen and the bar slides away."
           checked: root.settings.keepBar !== false

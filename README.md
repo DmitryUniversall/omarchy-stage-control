@@ -166,6 +166,7 @@ out of the bar, so your settings go with it.
 | `windowTitles` | `hover` | `hover`, `always` (on hover when grouped by app), `never` |
 | `appIcons` | `true` | app icons on windows |
 | `spacesBar` | `auto` | `auto` (names; thumbnails on hover), `expanded` (thumbnails and names), `thumbnails` (thumbnails; a name while pointed at) |
+| `previewsWhileOpening` | `false` | the other desktops' thumbnails fill in during the opening animation rather than after it |
 | `keepBar` | `true` | the stage opens below the top bar instead of covering it |
 | `renumberDesktops` | `true` | close the gap when a desktop is removed |
 | `closeButtons` | `true` | a close button on the window under the pointer |
