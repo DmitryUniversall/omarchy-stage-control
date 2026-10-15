@@ -42,6 +42,10 @@ PanelWindow {
 
   readonly property string glassStyle: settings.glass || "liquid"
   readonly property string windowTitles: settings.windowTitles || "hover"
+  // The window under the pointer lifts and gets the highlight outline:
+  // "always", "moved" (not one the stage itself brought under a pointer
+  // that stood still, see `pointerStill`) or "never".
+  readonly property string windowHighlight: settings.windowHighlight || "always"
   readonly property bool showIcons: settings.appIcons !== false
   readonly property bool showCloseButtons: settings.closeButtons !== false
   readonly property bool grouped: mission && settings.groupByApp === true
@@ -171,6 +175,7 @@ PanelWindow {
   onShowsHereChanged: {
     // The window stays up between openings, so the keys come back here.
     if (showsHere) Qt.callLater(focusKeys)
+    if (showsHere) holdPointer()
     hoverAddress = ""
     selectedAddress = ""
     cancelDrag()
@@ -549,6 +554,7 @@ PanelWindow {
   // Anything sliding: the windows' live previews wait meanwhile
   // (WindowTile), as they do while the stage opens.
   readonly property bool moving: peeking || peekAnimation.running || slideEndTimer.running
+  onMovingChanged: if (moving) holdPointer()
 
   // The other desktops' windows are laid out once the stage has opened and
   // settled, off screen with one picture each (WindowTile.peek), so a swipe
@@ -820,6 +826,23 @@ PanelWindow {
     if (!tile || !service.interactive) return
     tile.markClosing()
     service.closeWindow(address)
+  }
+
+  // ---- the pointer standing still --------------------------------------------------------
+  //
+  // When the stage opens, or desktops slide or follow a swipe, windows come
+  // to rest under a pointer that didn't move. With windowHighlight "moved"
+  // they don't react to it (WindowTile.hoverIn) until the pointer moves.
+  // Moving windows give the pointer hover events too, at the spot it already
+  // was, so only a move of the pointer itself, away from that spot, counts.
+
+  property bool pointerStill: false
+  property var stillAt: null
+  readonly property bool hoverHeld: windowHighlight === "moved" && pointerStill
+
+  function holdPointer() {
+    pointerStill = true
+    stillAt = pointerWatch.hovered ? pointerWatch.point.scenePosition : null
   }
 
   // ---- dragging windows ----------------------------------------------------------------
@@ -1143,6 +1166,18 @@ PanelWindow {
           hideSource: false
           opacity: 1 - win.smooth(0, 0.22, win.p)
           visible: opacity > 0.01 && screenGhost.hasContent
+        }
+      }
+
+      // Where the pointer is, for `pointerStill`. Watches only; every
+      // window under it still gets its hover.
+      HoverHandler {
+        id: pointerWatch
+        onPointChanged: {
+          if (!win.pointerStill) return
+          var at = point.scenePosition
+          if (!win.stillAt) win.stillAt = at
+          else if (Math.abs(at.x - win.stillAt.x) + Math.abs(at.y - win.stillAt.y) > 4) win.pointerStill = false
         }
       }
 

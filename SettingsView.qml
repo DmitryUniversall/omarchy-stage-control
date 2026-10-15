@@ -493,6 +493,20 @@ Item {
           onClicked: root.set("groupByApp", root.settings.groupByApp !== true)
         }
 
+        SectionLabel { text: "Window under the pointer" }
+        ButtonGroup {
+          options: [{ value: "always", label: "Highlight" }, { value: "moved", label: "Once the pointer moves" }, { value: "never", label: "Don't highlight" }]
+          value: root.settings.windowHighlight || "always"
+          onChanged: function(v) { root.set("windowHighlight", v) }
+        }
+        Caption {
+          text: (root.settings.windowHighlight || "always") === "moved"
+            ? "A window the stage brings under the pointer (as it opens, or as desktops slide or follow a swipe) isn't highlighted until you move the pointer."
+            : (root.settings.windowHighlight === "never"
+              ? "No lift or outline on the window under the pointer. A window picked with the arrow keys or Tab is still outlined."
+              : "The window under the pointer lifts a little and gets an outline in the highlight color.")
+        }
+
         SectionLabel { text: "Window titles" }
         ButtonGroup {
           options: [{ value: "hover", label: "On hover" }, { value: "always", label: "Always" }, { value: "never", label: "Never" }]

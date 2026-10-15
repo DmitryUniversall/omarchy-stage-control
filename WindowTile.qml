@@ -24,7 +24,11 @@ Item {
   readonly property bool onScreen: !!info && info.onScreen
   readonly property bool hovered: !!overview && overview.hoverAddress === modelData
   readonly property bool selected: !!overview && overview.selectedAddress === modelData
-  readonly property bool lit: (hovered || selected) && !!service && service.interactive && !dragging && !dropping && !closingOut
+  // Pointed at or picked from the keyboard: shows its title (with titles on
+  // hover). `lit` adds the lift and the highlight outline, which the
+  // pointer only gives as windowHighlight allows; the keyboard always does.
+  readonly property bool active: (hovered || selected) && !!service && service.interactive && !dragging && !dropping && !closingOut
+  readonly property bool lit: active && (selected || (!!overview && overview.windowHighlight !== "never"))
   readonly property bool exiting: !!service && service.exitAddress === modelData
   readonly property bool dragging: !!overview && overview.dragAddress === modelData
   readonly property bool hasContent: capture.hasContent
@@ -322,7 +326,7 @@ Item {
     id: titlePill
     readonly property string titles: tile.overview ? tile.overview.windowTitles : "hover"
     readonly property bool wanted: !!tile.info && tile.title !== "" && !tile.dragging && !tile.dropping
-      && ((titles === "always" && !tile.overview.grouped) || (titles !== "never" && tile.lit))
+      && ((titles === "always" && !tile.overview.grouped) || (titles !== "never" && tile.active))
     anchors.horizontalCenter: frame.horizontalCenter
     anchors.top: frame.bottom
     anchors.topMargin: badge.visible ? badge.size / 2 + 6 : 10
@@ -390,7 +394,17 @@ Item {
 
   function hoverIn() {
     hoverGrace.stop()
+    // Brought under a pointer that hasn't moved: not yet (Overview.hoverHeld).
+    if (overview.hoverHeld) return
     overview.hoverAddress = modelData
+  }
+
+  // The pointer moved: the window it's on takes it now.
+  Connections {
+    target: tile.overview
+    function onHoverHeldChanged() {
+      if (!tile.overview.hoverHeld && (mouse.containsMouse || closeMouse.containsMouse)) tile.hoverIn()
+    }
   }
 
   function hoverOut() {

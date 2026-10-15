@@ -160,6 +160,7 @@ out of the bar, so your settings go with it.
 | `macShortcuts` | `false` | Ctrl+↑, Ctrl+↓, Ctrl+←/→ and F3 on Mac keyboards |
 | `cornerTopLeft`, `cornerTopRight`, `cornerBottomLeft`, `cornerBottomRight` | `none` | `none`, `stage`, `appWindows`, `launchpad`, `menu`, `lock`, `screensaver` |
 | `groupByApp` | `false` | group windows by application |
+| `windowHighlight` | `always` | the window under the pointer lifts and is outlined: `always`, `moved` (not one the stage brought under a still pointer, until it moves), `never` (the keyboard's pick still is) |
 | `windowTitles` | `hover` | `hover`, `always` (on hover when grouped by app), `never` |
 | `appIcons` | `true` | app icons on windows |
 | `spacesBar` | `auto` | `auto` (names; thumbnails on hover), `expanded` (thumbnails and names), `thumbnails` (thumbnails; a name while pointed at) |
