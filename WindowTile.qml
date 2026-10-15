@@ -263,11 +263,37 @@ Item {
     return Math.max(0.2, Math.pow(0.8, Math.floor(Math.log(s) / Math.log(0.8))))
   }
 
+  // Under the window, what Hyprland shows through it where it's
+  // translucent: the blurred wallpaper (Overview.windowBackdrop), taken from
+  // wherever the window is on the stage as it moves. The window used to sit
+  // on a flat dark gray, which turned translucent terminals and themed
+  // browsers gray the moment the stage showed. The pane is Glass's shader
+  // with nothing but its window-space sampling and rounded corners.
+  ShaderEffect {
+    anchors.fill: frame
+    visible: !!backdrop
+    property var backdrop: tile.overview ? tile.overview.windowBackdrop : null
+    property size itemSize: Qt.size(width, height)
+    property real radius: frame.radius
+    property real bevel: 0.001
+    property real refraction: 0
+    property real frost: 0
+    property real rim: 0
+    property real flip: 0
+    property real windowSpace: 1
+    property vector4d area: Qt.vector4d(0, 0, 1, 1)
+    property vector4d tint: Qt.vector4d(0, 0, 0, 0)
+    property vector4d fill: Qt.vector4d(0, 0, 0, 0)
+    fragmentShader: Qt.resolvedUrl("shaders/glass.frag.qsb")
+  }
+
   Rounded {
     id: frame
     anchors.fill: parent
     radius: tile.cornerRadius
-    color: Qt.rgba(0.11, 0.11, 0.13, 1)
+    // Clear: the window shows over the backdrop above, translucent where it
+    // is translucent.
+    color: "transparent"
     contentWidth: tile.info ? tile.info.size.w * tile.renderScale : width
     contentHeight: tile.info ? tile.info.size.h * tile.renderScale : height
 

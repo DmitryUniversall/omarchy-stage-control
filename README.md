@@ -10,8 +10,10 @@ Close windows, or swipe down for just the current app's windows.
 
 * **Follows your fingers.** The swipe is tracked 1:1, like macOS: windows fly
   out of their places as you move, and letting go finishes or cancels by how
-  far and how fast you swiped. The stage is ready a few frames into the
-  swipe and eases in from your desktop to catch up with your fingers.
+  far and how fast you swiped. The stage gets ready the moment your fingers
+  touch the trackpad, and from its first frame it moves exactly when they
+  do, arriving with them. A whole swipe up is as long as Hyprland's swipe
+  between desktops (`gestures:workspace_swipe_distance`).
 * **Live previews** of every window on your desktop, and live thumbnails of
   your other desktops in the Spaces bar.
 * **Spaces bar.** Your desktops' names along the top; point at it (or drag a
