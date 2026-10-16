@@ -86,7 +86,7 @@ Item {
     to: 1
     duration: 300
     easing.type: Easing.InOutCubic
-    onFinished: if (!tile.dropFades) tile.dropping = false
+    onFinished: if (!tile.dropFades || tile.peek) tile.endDrop()
   }
 
   function flyTo(rect, fade) {
@@ -104,8 +104,18 @@ Item {
   Connections {
     target: tile.service
     function onSnapVersionChanged() {
-      if (tile.dropping && !dropAnimation.running) tile.dropping = false
+      if (tile.dropping && !dropAnimation.running) tile.endDrop()
     }
+  }
+
+  // A window moved to another desktop stays a tile, waiting off the
+  // screen's edge for a swipe (peek): it goes there once its flight is
+  // over, rather than staying, faded, where the desktop's thumbnail was. In
+  // the Spaces bar's "auto" mode the thumbnails fold away into names and
+  // left it behind as a ghost of the window.
+  function endDrop() {
+    dropping = false
+    if (peek) placeAt(info.peekPage * overview.pageShift)
   }
 
   // Switching desktops on the open stage (Overview, "sliding desktops"):
@@ -117,6 +127,9 @@ Item {
   // (Overview, "swiping between desktops"), with one picture rather than a
   // live preview.
   readonly property bool peek: !!info && info.peek === true
+  // A window that left for another desktop some other way (not dropped,
+  // nor sliding out) goes off screen with that desktop's windows.
+  onPeekChanged: if (peek && !dropping) placeAt(info.peekPage * overview.pageShift)
   property real slideX: 0
   // The swipe moves every tile at once (Overview.trackX).
   transform: Translate { x: tile.slideX + (tile.overview ? tile.overview.trackX : 0) }
