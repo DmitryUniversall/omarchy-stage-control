@@ -78,12 +78,14 @@ let passed = 0;
   passed++;
 }
 
-// How the top bar comes back from a desktop picked in the Spaces bar: one of two.
+// How the top bar comes back from a desktop picked in the Spaces bar: one of three.
 {
-  assert.equal(defaults.barReturn, "during");
-  assert.equal(plain(Settings.merge(defaults, { barReturn: "after" }, schema)).barReturn, "after");
-  assert.equal(plain(Settings.merge(defaults, { barReturn: "sideways" }, schema)).barReturn, "during");
-  assert.equal(plain(Settings.merge(defaults, { barReturn: true }, schema)).barReturn, "during");
+  assert.equal(defaults.barReturn, "inside");
+  for (const way of ["inside", "during", "after"]) {
+    assert.equal(plain(Settings.merge(defaults, { barReturn: way }, schema)).barReturn, way);
+  }
+  assert.equal(plain(Settings.merge(defaults, { barReturn: "sideways" }, schema)).barReturn, "inside");
+  assert.equal(plain(Settings.merge(defaults, { barReturn: true }, schema)).barReturn, "inside");
   passed++;
 }
 

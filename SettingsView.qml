@@ -556,16 +556,19 @@ Item {
         ButtonGroup {
           enabled: root.settings.keepBar === false
           opacity: enabled ? 1 : 0.5
-          options: [{ value: "during", label: "With the desktop" }, { value: "after", label: "Once it's open" }]
-          value: root.settings.barReturn || "during"
+          options: [{ value: "inside", label: "Part of the desktop" }, { value: "during", label: "Slides in with it" },
+            { value: "after", label: "Slides in after" }]
+          value: root.settings.barReturn || "inside"
           onChanged: function(v) { root.set("barReturn", v) }
         }
         Caption {
           text: root.settings.keepBar !== false
             ? "Only while the stage covers the top bar: turn off Keep the top bar."
-            : (root.settings.barReturn === "after"
+            : root.settings.barReturn === "after"
               ? "Pick a desktop in the Spaces bar and it opens over the whole screen, then the top bar slides back down."
-              : "Pick a desktop in the Spaces bar and the top bar slides back down as the desktop opens, landing with it.")
+              : root.settings.barReturn === "during"
+                ? "Pick a desktop in the Spaces bar and the top bar slides back down as the desktop opens, landing with it."
+                : "Pick a desktop in the Spaces bar and the top bar comes out of its thumbnail with it, as part of the desktop, in place once it has opened."
         }
 
         Toggle {

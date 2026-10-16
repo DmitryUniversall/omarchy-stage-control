@@ -89,23 +89,28 @@ PanelWindow {
     : Qt.vector4d(monitor.reserved.top / Math.max(1, stageHeight), monitor.reserved.bottom / Math.max(1, stageHeight),
                   monitor.reserved.left / Math.max(1, stageWidth), monitor.reserved.right / Math.max(1, stageWidth))
   readonly property real edgesOpen: keepBar || reduceMotion ? 0
-    : barReturn !== "" ? (barLanded ? 1 : 0)
+    : barComes ? (barLanded ? 1 : 0)
     : 1 - smooth(0, 0.12, p)
 
   // Going to a desktop picked in the Spaces bar (closeOnDesktop), the bar
-  // comes back whole, sliding down from the edge: "during" as the desktop
-  // opens, landing as it does, or "after" it has opened (Service.barDrop).
-  // As it lands the real one takes over at once: crossed over while the
-  // bar still moved, two bars showed a few pixels apart, as if the bar
-  // stretched. "" otherwise.
+  // comes back whole: "inside" as part of the desktop, out of its thumbnail
+  // with it (the strips follow zoomCard), "during" sliding down from the
+  // edge as the desktop opens, landing as it does, or "after" it has opened
+  // (Service.barDrop). As it lands the real one takes over at once: crossed
+  // over while the bar still moved, two bars showed a few pixels apart, as
+  // if the bar stretched. "" otherwise.
   readonly property string barReturn: !keepBar && !reduceMotion && !!zoomInto && !!service && service.closing
-    ? (settings.barReturn === "after" ? "after" : "during") : ""
+    ? (settings.barReturn || "inside") : ""
+  // Only with the bar in the screen capture and on the desktop opening:
+  // a fullscreen window covers it (zoomInto.bar).
+  readonly property bool barComes: barReturn !== "" && zoomInto.bar === true
   // How far the bar is above its place: 1 out of sight, 0 in place.
   readonly property real barAway: barReturn === "during" ? p
     : barReturn === "after" ? 1 - service.barDrop
+    : barReturn === "inside" ? 0
     : screenGhost.fade
-  readonly property bool barLanded: barReturn === "during" ? p <= 0
-    : barReturn === "after" && service.barDrop >= 1
+  readonly property bool barLanded: barReturn === "after" ? service.barDrop >= 1
+    : barReturn !== "" && p <= 0
 
   // The window stays up while the stage is closed: one made afresh for every
   // opening spent about 100 ms on its first frame, so a swipe's stage
@@ -1003,10 +1008,19 @@ PanelWindow {
   // thumbnail there to grow from.
   readonly property real zoomShown: zoomInto && zoomInto.fromName ? 1 - smooth(0.8, 1, e) : 1
 
+  // Whether desktop `id` shows the top bar: a fullscreen window covers it.
+  function barOn(id) {
+    var desktop = desktopData[id]
+    return !desktop || !desktop.fullscreenClass
+  }
+
   function closeOnDesktop(id) {
     var thumb = spacesBar.thumbs[id]
     var rect = !thumb ? null : spacesBar.expand > 0.5 ? thumb.pictureRect() : thumb.nameRect(stageWidth / Math.max(1, stageHeight))
-    zoomInto = rect ? { desktop: id, rect: rect, fromName: spacesBar.expand <= 0.5 } : null
+    // The bar comes back with it (barReturn) if it was in the screen capture
+    // (this desktop's) and shows on the desktop opening.
+    zoomInto = rect ? { desktop: id, rect: rect, fromName: spacesBar.expand <= 0.5,
+      bar: barOn(id) && (!monitor || barOn(monitor.activeWorkspace)) } : null
     service.close({ desktop: id, zoom: !!zoomInto })
     if (zoomInto) rebuild()
   }
@@ -1420,28 +1434,55 @@ PanelWindow {
           id: strip
           required property var modelData
           readonly property bool horizontal: modelData.edge === "top" || modelData.edge === "bottom"
+          // Its place at rest: this edge of the screen.
+          readonly property real restX: modelData.edge === "right" ? win.stageWidth - modelData.size : 0
+          readonly property real restY: modelData.edge === "bottom" ? win.stageHeight - modelData.size : 0
+          readonly property real restW: horizontal ? win.stageWidth : modelData.size
+          readonly property real restH: horizontal ? modelData.size : win.stageHeight
           readonly property real slide: modelData.size * win.barAway
-          x: modelData.edge === "right" ? win.stageWidth - modelData.size + slide : modelData.edge === "left" ? -slide : 0
-          y: modelData.edge === "bottom" ? win.stageHeight - modelData.size + slide : modelData.edge === "top" ? -slide : 0
-          width: horizontal ? win.stageWidth : modelData.size
-          height: horizontal ? modelData.size : win.stageHeight
+          // Part of the desktop opening from its thumbnail (barReturn
+          // "inside"): its place on the desktop, as the desktop grows.
+          readonly property bool inside: win.barReturn === "inside"
+          readonly property real sx: zoomCard.width / Math.max(1, win.stageWidth)
+          readonly property real sy: zoomCard.height / Math.max(1, win.stageHeight)
+          x: inside ? zoomCard.x + restX * sx
+            : modelData.edge === "right" ? restX + slide : modelData.edge === "left" ? -slide : 0
+          y: inside ? zoomCard.y + restY * sy
+            : modelData.edge === "bottom" ? restY + slide : modelData.edge === "top" ? -slide : 0
+          width: inside ? restW * sx : restW
+          height: inside ? restH * sy : restH
           // Over a desktop opening from its thumbnail, as over the windows.
           z: win.zoomInto ? 1900 : 0
           // At rest the real bar shows instead (edgesOpen); coming back
-          // whole (barReturn), once it has landed.
-          opacity: win.barReturn !== "" ? (win.barLanded ? 0 : 1)
+          // whole (barReturn), once it has landed. Part of the desktop, it
+          // shows as the desktop does (zoomShown).
+          opacity: win.barReturn !== "" ? (win.barComes && !win.barLanded ? (inside ? zoomCard.opacity : 1) : 0)
             : (1 - screenGhost.fade) * (1 - win.edgesOpen)
           visible: opacity > 0.01 && screenGhost.hasContent
 
           // Just this edge of the capture, not a copy of the whole screen.
           ShaderEffectSource {
+            id: stripCopy
             anchors.fill: parent
+            visible: !strip.inside
             sourceItem: screenGhost
-            sourceRect: Qt.rect(strip.modelData.edge === "right" ? win.stageWidth - strip.modelData.size : 0,
-                                strip.modelData.edge === "bottom" ? win.stageHeight - strip.modelData.size : 0,
-                                strip.width, strip.height)
+            sourceRect: Qt.rect(strip.restX, strip.restY, strip.restW, strip.restH)
             live: false
             hideSource: false
+            // Drawn small as the desktop starts to open (inside).
+            mipmap: true
+          }
+
+          // Part of the desktop, cut to its rounded corners (zoomCard).
+          ShaderEffect {
+            anchors.fill: parent
+            visible: strip.inside
+            property var source: stripCopy
+            property size rectSize: Qt.size(width * win.dpr, height * win.dpr)
+            property vector4d card: Qt.vector4d((zoomCard.x - strip.x) * win.dpr, (zoomCard.y - strip.y) * win.dpr,
+                                                zoomCard.width * win.dpr, zoomCard.height * win.dpr)
+            property real radius: zoomCard.radius
+            fragmentShader: Qt.resolvedUrl("shaders/strip.frag.qsb")
           }
         }
       }

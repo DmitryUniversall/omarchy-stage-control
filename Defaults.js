@@ -25,7 +25,7 @@ var DEFAULTS = {
   spacesBar: "auto",
   previewsWhileOpening: false,
   keepBar: true,
-  barReturn: "during",
+  barReturn: "inside",
   renumberDesktops: true,
   closeButtons: true,
   middleClickClose: true,
@@ -81,7 +81,7 @@ var SCHEMA = {
     windowTitles: ["hover", "always", "never"],
     windowHighlight: ["always", "moved", "never"],
     spacesBar: ["auto", "expanded", "thumbnails"],
-    barReturn: ["during", "after"],
+    barReturn: ["inside", "during", "after"],
     background: ["blur", "dim"],
     glass: ["liquid", "frosted", "solid", "theme"],
     highlight: ["accent", "blue", "purple", "pink", "red", "orange", "yellow", "green", "graphite"]
