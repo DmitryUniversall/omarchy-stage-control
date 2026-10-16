@@ -272,6 +272,31 @@ function applyPlan(snap, plan) {
   passed++;
 }
 
+// ---- Hyprland going to another desktop under the stage -------------------------
+{
+  const anim = (name, overridden, enabled, speed) => ({ name, overridden, enabled, speed, bezier: "", style: "" });
+  const base = [anim("global", true, true, 10), anim("workspacesIn", false, true, 0), anim("workspacesOut", false, true, 0)];
+  assert.equal(Model.workspaceAnimationMs([[...base, anim("workspaces", true, true, 6)], []]), 600);
+  assert.equal(Model.workspaceAnimationMs([[...base, anim("workspaces", true, false, 1)]]), 0, "off");
+  assert.equal(Model.workspaceAnimationMs([[...base, anim("workspaces", false, true, 0)]]), 1000, "as it takes it from global");
+  assert.equal(Model.workspaceAnimationMs([[anim("global", true, true, 10), anim("workspaces", true, false, 1),
+    anim("workspacesIn", true, true, 3), anim("workspacesOut", false, true, 0)]]), 300, "a child set on its own");
+  assert.equal(Model.workspaceAnimationMs(null), null);
+  assert.equal(Model.workspaceAnimationMs([[anim("global", true, true, 10)]]), null, "not Hyprland's list");
+
+  const snap = world([
+    client("0xa", "foot", 1, [0, 0], [10, 10]), client("0xb", "foot", 2, [0, 0], [10, 10]),
+    client("0xc", "foot", 2, [0, 0], [10, 10], { pinned: true }),
+    client("0xd", "foot", -98, [0, 0], [10, 10], { workspace: { id: -98, name: "special:minimized" } }),
+  ], [ws(1), ws(2)]);
+  assert.equal(Model.hiddenDesktopOf(snap, "0xa"), 0, "on screen");
+  assert.equal(Model.hiddenDesktopOf(snap, "0xb"), 2);
+  assert.equal(Model.hiddenDesktopOf(snap, "0xc"), 0, "pinned shows everywhere");
+  assert.equal(Model.hiddenDesktopOf(snap, "0xd"), 0, "a special workspace isn't a desktop");
+  assert.equal(Model.hiddenDesktopOf(snap, "0xe"), 0, "unknown");
+  passed++;
+}
+
 // ---- decorations, layer surfaces, app names ------------------------------------
 {
   const decor = plain(Model.decorFrom([

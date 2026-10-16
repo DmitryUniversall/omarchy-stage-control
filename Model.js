@@ -435,6 +435,47 @@ function planLua(moves, focus, focusAddress) {
   return lines.join("\n")
 }
 
+// ---- Hyprland going to another desktop under the stage -------------------------
+// Hyprland animates going to another desktop. Under the stage nobody sees
+// it, but it can go on after the stage is gone: the stage closed on a
+// desktop still sliding into place. So the stage waits that long before it
+// goes (Service.finishCloseWhenStill).
+
+// How long Hyprland's workspace animation takes, in ms, from `hyprctl -j
+// animations`: "workspaces" as it is, or as it takes it from "global", and
+// workspacesIn and workspacesOut when set on their own (a speed of 1 is
+// 100 ms). 0 when it's off, null when the list can't be read.
+function workspaceAnimationMs(json) {
+  var all = {}
+  ;(Array.isArray(json) ? json : []).forEach(function(group) {
+    ;(Array.isArray(group) ? group : []).forEach(function(a) {
+      if (a && typeof a.name === "string") all[a.name] = a
+    })
+  })
+  if (!all.workspaces || !all.global) return null
+  var longest = 0
+  function take(a) {
+    var speed = Number(a.speed)
+    if (a.enabled && speed > 0 && speed < 1000) longest = Math.max(longest, Math.round(speed * 100))
+  }
+  take(all.workspaces.overridden ? all.workspaces : all.global)
+  ;["workspacesIn", "workspacesOut"].forEach(function(name) {
+    if (all[name] && all[name].overridden) take(all[name])
+  })
+  return longest
+}
+
+// The desktop window `address` is on, when that desktop isn't on screen;
+// else 0.
+function hiddenDesktopOf(snap, address) {
+  if (!snap || !isAddress(address)) return 0
+  var w = null
+  for (var i = 0; i < snap.windows.length; i++) if (snap.windows[i].address === address) w = snap.windows[i]
+  if (!w || w.hidden || w.pinned || w.special) return 0
+  var monitor = monitorById(snap, w.monitor)
+  return monitor && w.workspace !== monitor.activeWorkspace && w.workspace !== monitor.specialWorkspace ? w.workspace : 0
+}
+
 // ---- which app a window belongs to ---------------------------------------------
 // A window class doesn't always name its desktop entry. LocalSend's is
 // org.localsend.localsend_app for localsend.desktop, and an Omarchy web app is

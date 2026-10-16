@@ -103,9 +103,10 @@ PanelWindow {
   // close: Hyprland then gives them to the window under the stage, which
   // turns active again, border and all, while the stage still covers it.
   // Given back only once the stage was gone, the window's border visibly
-  // went from inactive to active just as it showed.
-  WlrLayershell.keyboardFocus: showsHere && !!service && !service.testMode && !service.closing && monitor.focused
-    ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+  // went from inactive to active just as it showed. Let go for a moment
+  // while the stage goes to another desktop (Service.switchDesktop).
+  WlrLayershell.keyboardFocus: showsHere && !!service && !service.testMode && !service.closing && !service.handingKeys
+    && monitor.focused ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
   function smooth(edge0, edge1, x) {
     var t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)))
@@ -707,7 +708,7 @@ PanelWindow {
     }
     peekTarget = peekOrder[peekAt + peekTargetPage]
     peekGiveUp.restart()
-    service.focusDesktop(peekTarget)
+    service.switchDesktop(peekTarget)
   }
 
   // Hyprland is on the desktop the stage slid to: it becomes the stage's
