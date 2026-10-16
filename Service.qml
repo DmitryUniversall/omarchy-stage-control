@@ -770,7 +770,7 @@ Item {
     if (!shown || revealed) return
     revealTimer.stop()
     revealed = true
-    if (tracking) startCatchUp()
+    if (tracking) startFollowing()
     else if (!closing) animateTo(1)
   }
 
@@ -778,6 +778,7 @@ Item {
     options = options || {}
     if (!shown) {
       // A swipe that let go before Hyprland answered: call off the opening.
+      primeOverviews(false)
       openSerial++
       tracking = false
       progress = 0
@@ -852,7 +853,11 @@ Item {
 
   // ---- trackpad ----------------------------------------------------------------------
 
-  readonly property real swipeDistance: 240
+  // How far the fingers go to open the stage all the way: as far as they go
+  // to swipe a whole desktop in Hyprland (gestures:workspace_swipe_distance,
+  // swipeConfig), so the two swipes feel alike and the stage moves over the
+  // whole of a swipe rather than being done with a third of it left.
+  readonly property real swipeDistance: swipeConfig ? swipeConfig.distance : 300
   property real swipeTravel: 0
   property string swipeIntent: ""     // "", "open", "close" or "ignore"
   property int swipeDirection: 0      // sign of a swipe toward "open": -1 up (the stage), +1 down (App Exposé)
@@ -891,8 +896,10 @@ Item {
     swipeIntent = ""
     swipeSamples = []
     swipeTrail = []
-    // Read Hyprland now so the overlay is ready by the time the fingers commit.
+    // Read Hyprland now, and stretch the overlays over their screens, so the
+    // stage is ready by the time the fingers commit.
     swipeRead = !shown && refresh(null) ? runningRead : 0
+    if (!shown) primeOverviews(true)
     gestureUpdate(event)
   }
 
@@ -920,29 +927,32 @@ Item {
   }
 
   // A swipe's stage can only show once it's ready (`revealed`), and by then
-  // the fingers have gone some way. Rather than appear that far along, it
-  // starts from the desktop, where it was hidden, and catches up with the
-  // fingers over catchUpMs, easing in and out, then follows them exactly.
-  readonly property real catchUpMs: 150
-  property double catchUpStart: 0
-  property real catchUpFrom: 0
+  // the fingers have gone some way (`followFrom`, in the same 0 to 1). It
+  // shows where it was hidden, at the desktop, and from there follows the
+  // fingers at once, over the rest of their way: the part they have left
+  // takes it the whole way, so it moves exactly when they do and arrives
+  // when they do. (It used to catch up over 150 ms, easing in, which kept
+  // it still while the fingers moved on.) A flick that's nearly done before
+  // the stage shows doesn't stretch that far: it's taken the rest of the way
+  // as it would be on letting go.
+  property real followFrom: 0
 
-  function startCatchUp() {
-    catchUpStart = Date.now()
-    catchUpFrom = progress
+  function startFollowing() {
+    var fingers = fingersProgress(swipeOrigin)
+    if (fingers <= 0.75) {
+      followFrom = fingers
+    } else {
+      followFrom = 0
+      tracking = false
+      animateTo(1, swipeVelocity(0) / swipeDistance)
+    }
   }
 
   function trackedProgress(fingers) {
     // Hidden, the stage waits at the start for the fingers.
     if (!revealed) return 0
-    if (catchUpStart <= 0) return fingers
-    var t = (Date.now() - catchUpStart) / catchUpMs
-    if (t >= 1) {
-      catchUpStart = 0
-      return fingers
-    }
-    var k = t * t * (3 - 2 * t)
-    return catchUpFrom + (fingers - catchUpFrom) * k
+    if (followFrom <= 0) return fingers
+    return Math.max(0, Math.min(1, (fingers - followFrom) / (1 - followFrom)))
   }
 
   function decideIntent() {
@@ -964,7 +974,7 @@ Item {
   function beginTracking(which, direction, intent) {
     progressAnim.stop()
     animating = false
-    catchUpStart = 0
+    followFrom = 0
     var fresh = !shown
     swipeIntent = intent
     swipeDirection = direction
@@ -990,12 +1000,20 @@ Item {
     return travel * swipeDirection / dt
   }
 
+  function primeOverviews(on) {
+    for (var name in overviews) overviews[name].prime(on)
+  }
+
   function gestureFinish(event) {
     var intent = swipeIntent
     swipeIntent = ""
-    if (!tracking) return
+    if (!tracking) {
+      // Not the stage's swipe after all (App Exposé off, say).
+      if (!shown) primeOverviews(false)
+      return
+    }
     tracking = false
-    catchUpStart = 0
+    followFrom = 0
     var velocity = swipeVelocity(event.time)
     var perUnit = velocity / swipeDistance
     // Where the fingers were heading decides, then how far they got (they're

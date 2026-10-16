@@ -38,7 +38,7 @@ PanelWindow {
   // the glass get made now instead of all on the first frame you see. What
   // would be transparent at progress 0 is drawn at half opacity until then,
   // enough for Qt to draw it at all (it skips anything below 1/1000).
-  readonly property bool preparing: (!!service && service.shown && !service.revealed) || warming
+  readonly property bool preparing: (!!service && service.shown && !service.revealed) || warming || primed
 
   readonly property string glassStyle: settings.glass || "liquid"
   readonly property string windowTitles: settings.windowTitles || "hover"
@@ -56,6 +56,7 @@ PanelWindow {
   readonly property alias spacesBar: spacesBar
   readonly property alias screenCapture: screenGhost
   readonly property alias glassBackdrop: glassBackdrop
+  readonly property alias windowBackdrop: windowBlurLayer
 
   // The stage is the display's size, whatever size the window has just
   // then (see below).
@@ -98,7 +99,12 @@ PanelWindow {
   exclusionMode: ExclusionMode.Ignore
   WlrLayershell.namespace: "marcho78-stage-control"
   WlrLayershell.layer: service && service.testMode ? WlrLayer.Background : WlrLayer.Overlay
-  WlrLayershell.keyboardFocus: showsHere && !!service && !service.testMode && monitor.focused
+  // The keys, while the stage is up, and given back as soon as it starts to
+  // close: Hyprland then gives them to the window under the stage, which
+  // turns active again, border and all, while the stage still covers it.
+  // Given back only once the stage was gone, the window's border visibly
+  // went from inactive to active just as it showed.
+  WlrLayershell.keyboardFocus: showsHere && !!service && !service.testMode && !service.closing && monitor.focused
     ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
   function smooth(edge0, edge1, x) {
@@ -114,7 +120,24 @@ PanelWindow {
   // for a moment while closed, as it does while preparing (unseen, at
   // 1/250 opacity, taking no input), and keeps them for its first opening.
   property bool warming: false
-  readonly property bool drawn: showsHere || warming
+  readonly property bool drawn: showsHere || warming || primed
+
+  // Fingers on the trackpad for the stage's swipe (Service.gestureStart):
+  // the window stretches over the screen at once, while Hyprland is still
+  // being read and before the swipe is even known to be the stage's. Done
+  // only once the stage shows, its first full-size frame (about 50 ms) held
+  // the stage back while the fingers were already on their way.
+  property bool primed: false
+  function prime(on) {
+    primed = on && !showsHere && !!monitor
+    if (primed) primeTimeout.restart()
+  }
+  // A swipe that never became the stage's doesn't keep it up.
+  Timer {
+    id: primeTimeout
+    interval: 1500
+    onTriggered: win.primed = false
+  }
 
   function warmUp() {
     if (showsHere || !monitor) return
@@ -175,6 +198,7 @@ PanelWindow {
   onShowsHereChanged: {
     // The window stays up between openings, so the keys come back here.
     if (showsHere) Qt.callLater(focusKeys)
+    if (showsHere) primed = false
     if (showsHere) holdPointer()
     hoverAddress = ""
     selectedAddress = ""
@@ -305,9 +329,13 @@ PanelWindow {
       var from = onScreen ? Model.localRect(w, monitor)
         : { x: to.x + to.w * 0.04, y: to.y + to.h * 0.04 + 30, w: to.w * 0.92, h: to.h * 0.92 }
       var app = service.appFor(w.cls)
+      var home = Model.monitorById(snap, w.monitor) || monitor
       data[w.address] = {
         address: w.address, title: w.title, initialTitle: w.initialTitle, cls: w.cls, icon: app.icon, appName: app.name,
         from: from, to: to, size: { w: w.w, h: w.h }, onScreen: onScreen, minimized: false,
+        // Where the window is on its display, whichever desktop it's on:
+        // what shows through it is taken from there (WindowTile).
+        place: Model.localRect(w, home),
         workspace: w.workspace, z: (w.floating ? 200 : 0) + (windows.length - index)
       }
       ids.push(w.address)
@@ -389,9 +417,11 @@ PanelWindow {
           var to = peekResult.windows[w.address]
           if (!to || data[w.address]) return
           var app = service.appFor(w.cls)
+          var home = Model.monitorById(snap, w.monitor) || monitor
           data[w.address] = {
             address: w.address, title: w.title, initialTitle: w.initialTitle, cls: w.cls, icon: app.icon, appName: app.name,
             from: to, to: to, size: { w: w.w, h: w.h }, onScreen: false, minimized: false,
+            place: Model.localRect(w, home),
             workspace: w.workspace, z: (w.floating ? 200 : 0) + (peekWindows.length - index),
             peek: true, peekPage: peekPage
           }
@@ -1036,6 +1066,25 @@ PanelWindow {
           blurMax: 64
           blur: 1.0
           saturation: 0.25
+          autoPaddingEnabled: false
+          layer.enabled: true
+          layer.smooth: true
+          layer.textureSize: Qt.size(Math.max(1, Math.round(width / 2)), Math.max(1, Math.round(height / 2)))
+        }
+
+        // What shows through windows that let the desktop through (a
+        // terminal at 55%, a translucent browser theme), the way Hyprland
+        // shows it: the wallpaper, blurred about as much as Hyprland's own
+        // blur does, in full color. WindowTile draws it under each window,
+        // from where the window is. Rendered once, like the blur above.
+        MultiEffect {
+          id: windowBlurLayer
+          anchors.fill: parent
+          source: wallpaperImage
+          visible: false
+          blurEnabled: true
+          blurMax: 32
+          blur: 0.4
           autoPaddingEnabled: false
           layer.enabled: true
           layer.smooth: true

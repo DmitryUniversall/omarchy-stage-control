@@ -10,8 +10,10 @@ Close windows, or swipe down for just the current app's windows.
 
 * **Follows your fingers.** The swipe is tracked 1:1, like macOS: windows fly
   out of their places as you move, and letting go finishes or cancels by how
-  far and how fast you swiped. The stage is ready a few frames into the
-  swipe and eases in from your desktop to catch up with your fingers.
+  far and how fast you swiped. The stage gets ready the moment your fingers
+  touch the trackpad, and from its first frame it moves exactly when they
+  do, arriving with them. A whole swipe up is as long as Hyprland's swipe
+  between desktops (`gestures:workspace_swipe_distance`).
 * **Live previews** of every window on your desktop, and live thumbnails of
   your other desktops in the Spaces bar.
 * **Spaces bar.** Your desktops' names along the top; point at it (or drag a
@@ -164,6 +166,7 @@ out of the bar, so your settings go with it.
 | `windowTitles` | `hover` | `hover`, `always` (on hover when grouped by app), `never` |
 | `appIcons` | `true` | app icons on windows |
 | `spacesBar` | `auto` | `auto` (names; thumbnails on hover), `expanded` (thumbnails and names), `thumbnails` (thumbnails; a name while pointed at) |
+| `previewsWhileOpening` | `false` | the other desktops' thumbnails fill in during the opening animation rather than after it |
 | `keepBar` | `true` | the stage opens below the top bar instead of covering it |
 | `renumberDesktops` | `true` | close the gap when a desktop is removed |
 | `closeButtons` | `true` | a close button on the window under the pointer |

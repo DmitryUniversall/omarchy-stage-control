@@ -63,8 +63,13 @@ Item {
   // this desktop's turn (SpacesBar.previewTurns), so the bar opens without
   // first starting a capture of every window again.
   property bool previews: false
+  // A bar that's always open would otherwise start every desktop's on the
+  // stage's first frame, the one a swipe waits for: there only the desktop
+  // on screen starts at once (its windows are the stage's own tiles, see
+  // tilePreview), and the others take their turns as the stage settles.
   readonly property bool wantsPreviews: !!overview && overview.showsHere && overview.mission
-    && (ex > 0.01 || (!!strip && strip.previewRank(modelData) < strip.previewTurns))
+    && ((ex > 0.01 && (!strip || strip.mode === "auto" || active))
+      || (!!strip && strip.previewRank(modelData) < strip.previewTurns))
   onWantsPreviewsChanged: if (wantsPreviews) previews = true
   // Thumbnails outlive a closed stage (Overview.rebuild()); their previews
   // don't, so the next opening captures the windows as they are then.
