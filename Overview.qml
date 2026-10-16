@@ -382,8 +382,16 @@ PanelWindow {
       rebaseAfterSwipe()
       slideFromDesktop = active
     }
-    if (mission && slideFromDesktop !== 0 && active !== slideFromDesktop && slideAllowed())
-      beginSlide(slideFromDesktop, active, width, data)
+    // Another desktop with nothing to slide (the stage is closing on it, a
+    // desktop clicked in the Spaces bar): its windows, waiting off screen
+    // for a swipe, come to their places at once, and the ones left behind
+    // go off screen, so the stage closes on the desktop it goes to. Before,
+    // it closed on the one it left, and the other one only appeared after.
+    var switchedInPlace = false
+    if (mission && slideFromDesktop !== 0 && active !== slideFromDesktop) {
+      if (slideAllowed()) beginSlide(slideFromDesktop, active, width, data)
+      else switchedInPlace = true
+    }
     slideFromDesktop = mission ? active : 0
     // Windows still sliding out stay on the stage until they're gone; only
     // where they'll be, not where they are now, so none of them can be
@@ -439,6 +447,12 @@ PanelWindow {
     setModel("placed", rects)
     setModel("minimizedIds", minIds)
     startSlideIns()
+    if (switchedInPlace) {
+      for (var placedAddress in tileItems) {
+        var placedInfo = data[placedAddress]
+        if (placedInfo) tileItems[placedAddress].settleAt(placedInfo.peek ? placedInfo.peekPage * pageShift : 0)
+      }
+    }
     if (selectedAddress && (!data[selectedAddress] || data[selectedAddress].leaving)) selectedAddress = ""
     if (hoverAddress && (!data[hoverAddress] || data[hoverAddress].leaving)) hoverAddress = ""
   }
@@ -883,9 +897,19 @@ PanelWindow {
   property var dropTarget: null
   readonly property bool dragging: dragAddress !== ""
   // Windows shrink as they near the Spaces bar, like on macOS.
+  // Over the bar it's the size it would be in a desktop's thumbnail: its
+  // real size at the thumbnails' scale, however many desktops (and however
+  // small their thumbnails) there are. (A fixed 38% of its size on the stage
+  // covered two or three thumbnails when there were many.)
   readonly property real dragShrink: {
     var near = spacesBar.y + spacesBar.height + 170
-    return 1 - 0.62 * smooth(0, 1, (near - dragPoint.y) / 170)
+    var info = dragAddress !== "" ? tileData[dragAddress] : null
+    var smallest = 0.38
+    if (info && info.to && info.size && stageWidth > 0) {
+      var inThumbnail = info.size.w * spacesBar.thumbW / stageWidth
+      smallest = Math.max(0.05, Math.min(1, inThumbnail / Math.max(1, info.to.w)))
+    }
+    return 1 - (1 - smallest) * smooth(0, 1, (near - dragPoint.y) / 170)
   }
 
   function beginDrag(address, point) {

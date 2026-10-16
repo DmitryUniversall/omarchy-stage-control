@@ -22,7 +22,6 @@ Item {
   readonly property bool hovered: hover.hovered
   readonly property bool dropTarget: !!overview && !!overview.dropTarget
     && overview.dropTarget.kind === "desktop" && overview.dropTarget.id === modelData
-  readonly property bool reorderTarget: !!strip && strip.reorderTargetId === modelData && strip.draggingDesktop !== modelData
   readonly property bool beingDragged: !!strip && strip.draggingDesktop === modelData
   // The name you gave it, else a full-screen app's name, else Hyprland's.
   readonly property string customName: service && service.desktopNames ? (service.desktopNames[String(modelData)] || "") : ""
@@ -88,9 +87,15 @@ Item {
     return { x: point.x, y: point.y, w: picture.width * picture.scale, h: picture.height * picture.scale }
   }
 
-  // While another desktop is dragged over this one, make room for it.
+  // Dragged, it follows the pointer; another desktop dragged across this
+  // one moves it aside to make room (SpacesBar.makeRoom).
   transform: Translate {
-    x: thumb.beingDragged ? thumb.strip.desktopDragOffset : 0
+    x: thumb.beingDragged ? thumb.strip.desktopDragOffset : (thumb.strip ? thumb.strip.makeRoom(thumb.modelData) : 0)
+    Behavior on x {
+      // Not under the pointer, only on its way into the room let go in.
+      enabled: !!thumb.strip && thumb.strip.roomAnimated && (!thumb.beingDragged || thumb.strip.settling)
+      NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+    }
   }
   z: beingDragged ? 10 : 0
 
@@ -101,7 +106,7 @@ Item {
     height: strip ? strip.thumbH : 0
     opacity: thumb.ex
     visible: opacity > 0.01
-    scale: (0.72 + 0.28 * thumb.ex) * (thumb.dropTarget || thumb.reorderTarget ? 1.06 : thumb.hovered && !thumb.beingDragged ? 1.03 : 1)
+    scale: (0.72 + 0.28 * thumb.ex) * (thumb.dropTarget ? 1.06 : thumb.hovered && !thumb.beingDragged ? 1.03 : 1)
     transformOrigin: Item.Top
     Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
 
@@ -192,8 +197,8 @@ Item {
       anchors.margins: -3
       radius: 12
       color: "transparent"
-      border.width: thumb.dropTarget || thumb.reorderTarget ? 3 : thumb.active ? 2.5 : 1
-      border.color: thumb.dropTarget || thumb.reorderTarget || thumb.active ? (thumb.overview ? thumb.overview.highlight : "#0a84ff")
+      border.width: thumb.dropTarget ? 3 : thumb.active ? 2.5 : 1
+      border.color: thumb.dropTarget || thumb.active ? (thumb.overview ? thumb.overview.highlight : "#0a84ff")
         : Qt.rgba(1, 1, 1, thumb.hovered ? 0.45 : 0.16)
       Behavior on border.color { ColorAnimation { duration: 140 } }
     }
