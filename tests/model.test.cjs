@@ -57,6 +57,8 @@ const ws = (id, monitor, windows) => ({ id, name: String(id), monitor: monitor |
   assert.equal(Model.activeWindow(snap).address, "0xa1");
   const visible = plain(Model.visibleWindows(snap, snap.monitors[0])).map((w) => w.address);
   assert.deepEqual(visible, ["0xa1", "0xa2"], "only the active workspace, most recent first");
+  assert.deepEqual(plain(Model.visibleWindows(snap, snap.monitors[0], 2)).map((w) => w.address), ["0xb1"],
+    "another desktop's, as they'll be once it's on screen");
   assert.deepEqual(plain(Model.minimizedWindows(snap, "")).map((w) => w.address), ["0xc1"]);
   assert.deepEqual(plain(Model.appWindows(snap, "foot")).map((w) => w.address), ["0xa1", "0xb1"]);
   passed++;
@@ -269,6 +271,64 @@ function applyPlan(snap, plan) {
     ${lua}
     print(table.concat(log, "\\n"))`], { encoding: "utf8" });
   assert.equal(out.trim(), "move address:0xabc 2 false\nfocus 2");
+  passed++;
+}
+
+// ---- how Hyprland draws a window ----------------------------------------------------
+{
+  const looks = plain(Model.looksFrom([
+    { option: "decoration:blur:enabled", bool: true, set: true },
+    { option: "decoration:blur:size", int: 4, set: true },
+    { option: "decoration:blur:passes", int: 30, set: true },
+    { option: "decoration:blur:brightness", float: 0.9, set: true },
+    { option: "decoration:blur:ignore_opacity", bool: false, set: true },
+    { option: "decoration:shadow:range", int: 25, set: true },
+    { option: "decoration:shadow:color", gradient: "55000000 0deg", set: true },
+    { option: "decoration:shadow:color_inactive", gradient: "ff112233 0deg", set: false },
+    { option: "decoration:shadow:offset", vec2: [0, 5], set: true },
+    { option: "decoration:inactive_opacity", float: 0.95, set: true },
+    { option: "decoration:rounding_power", float: 2.0, set: false },
+    "junk", [1], { option: "decoration:blur:size", float: "nan" },
+  ]));
+  assert.equal(looks.blur.size, 4);
+  assert.equal(looks.blur.passes, 8, "Hyprland's own limit");
+  assert.equal(looks.blur.brightness, 0.9);
+  assert.equal(looks.blur.contrast, 0.8916, "Hyprland's default where missing");
+  assert.equal(looks.blur.ignoreOpacity, false);
+  assert.equal(looks.shadow.range, 25);
+  assert.equal(looks.shadow.color, "#55000000");
+  assert.equal(looks.shadow.colorInactive, null, "unset: the active color");
+  assert.deepEqual(looks.shadow.offset, { x: 0, y: 5 });
+  assert.deepEqual(looks.opacity, { active: 1, inactive: 0.95, fullscreen: 1 });
+  assert.equal(looks.roundingPower, 2);
+  assert.ok(Model.LOOK_OPTIONS.indexOf("decoration:blur:noise") >= 0);
+  passed++;
+}
+
+// ---- what window rules give each window ------------------------------------------------
+{
+  const batch = Model.windowPropsBatch(["0xa", "nope", "0xb"]);
+  assert.equal(batch.split(";").length, 2 * Model.WINDOW_PROPS.length, "valid addresses only");
+  assert.ok(batch.startsWith("getprop address:0xa opacity;"), "no space before a command: Hyprland takes it as part of it");
+  // 0xa answers everything; 0xb skips opacity_override (an older Hyprland), which mustn't shift the rest.
+  const answer = (address, skip) => Model.WINDOW_PROPS.filter((prop) => prop !== skip).map((prop) => ({
+    [prop]: { opacity: address === "0xa" ? 0.985 : 1, opacity_inactive: address === "0xa" ? 0.96 : 0.985, opacity_fullscreen: 1,
+              opacity_override: false, opacity_inactive_override: address === "0xb", opacity_fullscreen_override: false,
+              rounding: address === "0xa" ? 6 : 0, rounding_power: 2, border_size: 2, no_shadow: address === "0xb", decorate: true }[prop],
+  }));
+  const looks = plain(Model.windowLooksFrom([...answer("0xa"), ...answer("0xb", "opacity_override")], ["0xa", "0xb"]));
+  assert.deepEqual(looks["0xa"], { opacity: 0.985, opacityOverride: false, opacityInactive: 0.96, opacityInactiveOverride: false,
+    opacityFullscreen: 1, opacityFullscreenOverride: false, rounding: 6, roundingPower: 2, border: 2, shadow: true, decorate: true });
+  assert.equal(looks["0xb"].opacityInactive, 0.985, "a skipped answer shifts nothing");
+  assert.equal(looks["0xb"].opacityInactiveOverride, true);
+  assert.equal(looks["0xb"].shadow, false);
+  assert.equal(looks["0xb"].rounding, 0);
+
+  const settings = plain(Model.looksFrom([{ option: "decoration:inactive_opacity", float: 0.95 }]));
+  assert.equal(Model.windowAlpha(looks["0xa"], settings, "active"), 0.985, "the rule times the setting");
+  assert.ok(Math.abs(Model.windowAlpha(looks["0xa"], settings, "inactive") - 0.96 * 0.95) < 1e-9);
+  assert.equal(Model.windowAlpha(looks["0xb"], settings, "inactive"), 0.985, "unless the rule overrides it");
+  assert.equal(Model.windowAlpha(null, settings, "inactive"), 0.95, "no rule: the setting");
   passed++;
 }
 

@@ -87,6 +87,16 @@ Item {
     return { x: point.x, y: point.y, w: picture.width * picture.scale, h: picture.height * picture.scale }
   }
 
+  // Where the desktop opens from with the bar folded into names
+  // (Overview.closeOnDesktop): the screen's shape (`aspect`, width over
+  // height), as tall as the name and centered on it.
+  function nameRect(aspect) {
+    var center = pill.mapToItem(overview.stage, pill.width / 2, pill.height / 2)
+    var h = pill.height
+    var w = h * aspect
+    return { x: center.x - w / 2, y: center.y - h / 2, w: w, h: h }
+  }
+
   // Dragged, it follows the pointer; another desktop dragged across this
   // one moves it aside to make room (SpacesBar.makeRoom).
   transform: Translate {

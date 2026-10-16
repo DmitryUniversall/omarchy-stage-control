@@ -172,6 +172,95 @@ Item {
     registering = true
     bindsRun.start(["/usr/bin/hyprctl", "-j", "binds"])
     animationsRun.start(["/usr/bin/hyprctl", "-j", "animations"])
+    looksRun.start(["/usr/bin/hyprctl", "-j", "--batch", Model.LOOK_OPTIONS.map(function(option) {
+      return "getoption " + option
+    }).join("; ")])
+  }
+
+  // How Hyprland draws a window besides its border: the blur behind it, its
+  // shadow, its opacity (Model.looksFrom). Read again with every
+  // registration, so after every config reload.
+  property var looks: Model.looksFrom([])
+  Run {
+    id: looksRun
+    maxBytes: 64 * 1024
+    timeoutMs: 4000
+    onFinished: function(ok, output) {
+      if (!ok) return
+      try {
+        root.looks = Model.looksFrom(Model.splitJson(output))
+      } catch (e) {
+        console.warn("Stage Control: couldn't read how Hyprland draws windows:", e)
+      }
+    }
+  }
+
+  // What window rules give each window (Model.windowLooksFrom): its
+  // opacity active, inactive and fullscreen, its corners and border. Read
+  // for the windows not read yet as the stage opens and as windows turn up
+  // while it's open; a window's rules hardly change while it's up.
+  property var windowLooks: ({})
+  property bool windowLooksAgain: false
+
+  function readWindowLooks() {
+    if (!snap) return
+    if (windowLooksRun.running) {
+      windowLooksAgain = true
+      return
+    }
+    var known = windowLooks
+    var present = {}
+    var missing = []
+    snap.windows.forEach(function(w) {
+      present[w.address] = true
+      if (!known[w.address]) missing.push(w.address)
+    })
+    // Windows gone: their rules go too.
+    var kept = {}
+    var dropped = false
+    for (var address in known) {
+      if (present[address]) kept[address] = known[address]
+      else dropped = true
+    }
+    if (dropped) windowLooks = kept
+    if (missing.length === 0) return
+    windowLooksRun.addresses = missing
+    windowLooksRun.start(["/usr/bin/hyprctl", "-j", "--batch", Model.windowPropsBatch(missing)])
+  }
+
+  Run {
+    id: windowLooksRun
+    property var addresses: []
+    maxBytes: 256 * 1024
+    timeoutMs: 3000
+    onFinished: function(ok, output) {
+      if (ok) {
+        try {
+          var read = Model.windowLooksFrom(Model.splitJson(output), addresses)
+          var next = Settings.clone(root.windowLooks)
+          for (var address in read) next[address] = read[address]
+          root.windowLooks = next
+        } catch (e) {
+          console.warn("Stage Control: couldn't read the windows' rules:", e)
+        }
+      }
+      if (root.windowLooksAgain) {
+        root.windowLooksAgain = false
+        root.readWindowLooks()
+      }
+    }
+  }
+
+  // Whether Hyprland blurs what's behind an app's windows, by window class:
+  // learned from the screen (Overview's blur probe). An app can ask for no
+  // blur (ext-background-effect: foot does unless told to blur), and nothing
+  // else tells.
+  property var blurBehind: ({})
+  function learnBlurBehind(cls, blurred) {
+    if (typeof cls !== "string" || cls === "" || blurBehind[cls] === blurred) return
+    var next = Settings.clone(blurBehind)
+    next[cls] = blurred
+    blurBehind = next
   }
 
   // How long Hyprland takes to go to another desktop, and to turn a
@@ -354,6 +443,7 @@ Item {
             root.swipeConfig = Model.swipeFrom(rest)
             root.snap = Model.snapshot(parts[0], parts[1], parts[2])
             root.snapVersion++
+            if (root.shown) root.readWindowLooks()
             root.lastGoodRead = read
             good = true
           }
@@ -826,6 +916,7 @@ Item {
       }
       var wasShown = root.shown
       root.mode = which
+      root.readWindowLooks()
       if (wasShown && root.revealed) {
         if (!root.tracking) root.animateTo(1)
         return
@@ -893,6 +984,12 @@ Item {
     } else if (exitAddress) {
       var address = exitAddress
       if (!options.noFocus) afterKeysReturn(function() { root.focusWindow(address) })
+      animateTo(0)
+    } else if (validId(options.desktop) && options.zoom === true) {
+      // The stage opens the desktop from its thumbnail at once, from what it
+      // knows of it (Overview.closeOnDesktop); Hyprland goes there under it.
+      var zoomDesktop = options.desktop
+      afterKeysReturn(function() { root.goTo(zoomDesktop, "") })
       animateTo(0)
     } else if (validId(options.desktop)) {
       // Switch first, then zoom into the new desktop's windows.

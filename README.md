@@ -45,7 +45,10 @@ Close windows, or swipe down for just the current app's windows.
 * **Seamless.** When the stage opens it starts from an exact picture of your
   screen: title bars and borders ride along with their windows. The top bar
   stays where it is, live and clickable, and the Spaces bar slides out from
-  under it.
+  under it. Where the stage meets the screen, opening and closing, windows
+  are drawn the way Hyprland draws them: on the display's own pixels, at
+  their opacity, with Hyprland's shadows, borders and blur (or none, for an
+  app that asks for none), so nothing changes the moment the stage goes.
 
 ## Screenshots
 
@@ -214,20 +217,22 @@ does).
 Stage Control runs as unsandboxed code in the Omarchy shell, like every shell
 plugin, so here is exactly what it does.
 
-**No network, no root, nothing compiled on your machine.** The three
-shaders, the stage's backdrop, Liquid Glass and the rounded window previews,
-ship as source (`shaders/backdrop.frag`, `shaders/glass.frag`,
-`shaders/rounded.frag`, and `shaders/roundrect.glsl`, which the last two
-include) next to the `.qsb` files Qt loads; `shaders/build` rebuilds them
-with Qt's `qsb`, and with qsb 6.11 the result is byte for byte the committed
-files.
+**No network, no root, nothing compiled on your machine.** The shaders
+(the stage's backdrop, Liquid Glass, the rounded window previews, a desktop
+opening from its thumbnail, and Hyprland's blur, shadows and borders where
+windows come to rest) ship as source (`shaders/*.frag`, with
+`shaders/roundrect.glsl` and `shaders/hyprblur.glsl` included by some of them)
+next to the `.qsb` files Qt loads; `shaders/build` rebuilds them with Qt's
+`qsb`, and with qsb 6.11 the result is byte for byte the committed files.
+Hyprland's blur and shadow are Hyprland's own shader code, under its BSD
+3-Clause license (`shaders/LICENSE.hyprland`).
 
 **Programs.** Every command runs by absolute path with an argument list, never
 through a shell or `PATH`:
 
 | Program | Why |
 |---|---|
-| `/usr/bin/hyprctl` | read windows, desktops, displays and bindings; register Stage Control's gesture and shortcuts; move windows between desktops; bring the settings window forward |
+| `/usr/bin/hyprctl` | read windows, desktops, displays and bindings, and how Hyprland draws windows (`getoption` for blur, shadows and opacity; `getprop` for each window's rules; `animations`); register Stage Control's gesture and shortcuts; move windows between desktops; bring the settings window forward |
 | `/usr/bin/readlink` | find the wallpaper Omarchy is showing (`-f` on `~/.local/state/omarchy/current/background`) |
 | `/usr/bin/omarchy` | only for hot corners you assign: `menu toggle`, `menu toggle apps`, `system lock`, `launch screensaver` |
 

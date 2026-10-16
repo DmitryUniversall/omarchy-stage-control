@@ -41,9 +41,20 @@ Item {
   readonly property real collapsedHeight: inset + labelH + 16
   readonly property real expandedHeight: inset + thumbH + labelSpace + 18
 
-  readonly property bool expanded: mode !== "auto" || hover.hovered
+  readonly property bool wantsExpanded: mode !== "auto" || hover.hovered
     || (!!overview && (overview.dragging || overview.forceExpanded)) || draggingDesktop !== 0
     || renamingDesktop !== 0
+  // As it was once the stage starts to close or the fingers take it: the
+  // pointer stops counting then (the stage takes no input), and folding the
+  // bar into names gave its room to the windows, which moved before they
+  // went. A desktop picked in the bar opens from its thumbnail, which has
+  // to stay where it is.
+  readonly property bool frozen: !!service && (service.closing || service.tracking)
+  property bool heldExpanded: false
+  onWantsExpandedChanged: if (!frozen) heldExpanded = wantsExpanded
+  onFrozenChanged: if (!frozen) heldExpanded = wantsExpanded
+  Component.onCompleted: heldExpanded = wantsExpanded
+  readonly property bool expanded: frozen ? heldExpanded : wantsExpanded
   property real expand: expanded ? 1 : 0
   Behavior on expand { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
 
