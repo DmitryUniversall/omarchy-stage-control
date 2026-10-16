@@ -328,3 +328,10 @@ function neighbor(placed, fromId, direction) {
   })
   return best
 }
+
+// Where a window (`rect`, on a display `screenWidth` wide) shows in that
+// display's thumbnail at `thumb` ({ x, y, w, h }), as DesktopThumb draws it.
+function inThumbnail(rect, screenWidth, thumb) {
+  var s = thumb.w / Math.max(1, screenWidth)
+  return { x: thumb.x + rect.x * s, y: thumb.y + rect.y * s, w: Math.max(2, rect.w * s), h: Math.max(2, rect.h * s) }
+}

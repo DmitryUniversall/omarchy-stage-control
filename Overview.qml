@@ -56,12 +56,17 @@ PanelWindow {
   readonly property alias spacesBar: spacesBar
   readonly property alias screenCapture: screenGhost
   readonly property alias glassBackdrop: glassBackdrop
-  readonly property alias windowBackdrop: windowBlurLayer
+  // What shows through a translucent window (WindowTile): the wallpaper
+  // blurred as Hyprland blurs it, or nothing with Hyprland's blur off.
+  readonly property var windowBackdrop: windowBlur.texture
 
   // The stage is the display's size, whatever size the window has just
   // then (see below).
   readonly property real stageWidth: monitor ? monitor.w : width
   readonly property real stageHeight: monitor ? monitor.h : height
+  // Display pixels per stage pixel: what lines a window up with Hyprland's
+  // pixels at rest (WindowTile).
+  readonly property real dpr: devicePixelRatio > 0 ? devicePixelRatio : monitor ? monitor.scale : 1
 
   // The screen's edges the stage leaves uncovered: the room Hyprland keeps
   // for the top bar (and a dock), unless the stage is set to cover the bar.
@@ -73,6 +78,17 @@ PanelWindow {
   readonly property real edgeRight: keepBar && monitor && monitor.reserved ? monitor.reserved.right : 0
   readonly property real edgeBottom: keepBar && monitor && monitor.reserved ? monitor.reserved.bottom : 0
   readonly property var edges: ({ top: edgeTop, left: edgeLeft, right: edgeRight, bottom: edgeBottom })
+
+  // Covering the bar, the stage shows the bar as it was when the stage
+  // appeared (the strips below). At rest it lets the real one show through
+  // instead, opening holes in what it draws there: a bar that changed in the
+  // meantime (the desktop's number after going to another desktop, the
+  // clock) changed the moment the stage was gone. The two cross over as the
+  // stage starts to move.
+  readonly property vector4d edgeHoles: keepBar || !monitor || !monitor.reserved ? Qt.vector4d(0, 0, 0, 0)
+    : Qt.vector4d(monitor.reserved.top / Math.max(1, stageHeight), monitor.reserved.bottom / Math.max(1, stageHeight),
+                  monitor.reserved.left / Math.max(1, stageWidth), monitor.reserved.right / Math.max(1, stageWidth))
+  readonly property real edgesOpen: keepBar || reduceMotion ? 0 : 1 - smooth(0, 0.12, p)
 
   // The window stays up while the stage is closed: one made afresh for every
   // opening spent about 100 ms on its first frame, so a swipe's stage
@@ -89,12 +105,14 @@ PanelWindow {
   }
   implicitWidth: 1
   implicitHeight: 1
-  // Input only where the stage is: the top bar's clicks go to the bar.
+  // Input only where the stage is: the top bar's clicks go to the bar. None
+  // while the closed stage waits for Hyprland (Service.holdingStill).
+  readonly property bool takesInput: showsHere && !(service && service.holdingStill)
   mask: Region {
-    x: win.showsHere ? win.edges.left : 0
-    y: win.showsHere ? win.edges.top : 0
-    width: win.showsHere ? Math.max(0, win.stageWidth - win.edges.left - win.edges.right) : 0
-    height: win.showsHere ? Math.max(0, win.stageHeight - win.edges.top - win.edges.bottom) : 0
+    x: win.takesInput ? win.edges.left : 0
+    y: win.takesInput ? win.edges.top : 0
+    width: win.takesInput ? Math.max(0, win.stageWidth - win.edges.left - win.edges.right) : 0
+    height: win.takesInput ? Math.max(0, win.stageHeight - win.edges.top - win.edges.bottom) : 0
   }
   exclusionMode: ExclusionMode.Ignore
   WlrLayershell.namespace: "marcho78-stage-control"
@@ -103,9 +121,11 @@ PanelWindow {
   // close: Hyprland then gives them to the window under the stage, which
   // turns active again, border and all, while the stage still covers it.
   // Given back only once the stage was gone, the window's border visibly
-  // went from inactive to active just as it showed.
-  WlrLayershell.keyboardFocus: showsHere && !!service && !service.testMode && !service.closing && monitor.focused
-    ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+  // went from inactive to active just as it showed (Service.keysOut). Let
+  // go for a moment while the stage goes to another desktop
+  // (Service.switchDesktop).
+  WlrLayershell.keyboardFocus: showsHere && !!service && !service.testMode && !service.keysOut && !service.handingKeys
+    && monitor.focused ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
   function smooth(edge0, edge1, x) {
     var t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)))
@@ -207,6 +227,8 @@ PanelWindow {
     spacesBar.cancelDesktopDrag()
     // Where windows were on the last opening's screen capture: not this one's.
     if (!showsHere) ghostRects = ({})
+    if (!showsHere) resetProbes()
+    zoomInto = null
     // A new opening starts on its desktop; it doesn't slide there.
     if (!showsHere) endSlide()
     rebuild()
@@ -290,7 +312,16 @@ PanelWindow {
 
     var expose = service.mode === "expose"
     var mission = service.mode === "mission"
-    var windows = expose ? Model.appWindows(snap, service.exposeClass) : Model.visibleWindows(snap, monitor)
+    // Closing on a desktop picked in the Spaces bar: its thumbnail opens into
+    // the screen (closeOnDesktop), from the click on, with the windows it
+    // will show, while Hyprland goes there.
+    var zoom = mission && service.closing && !!zoomInto ? zoomInto : null
+    var windows = expose ? Model.appWindows(snap, service.exposeClass)
+      : Model.visibleWindows(snap, monitor, zoom ? zoom.desktop : undefined)
+    // The window with the keys once the stage is gone: going to a desktop,
+    // the one used there last, as Hyprland gives them to it.
+    var focused = zoom ? (windows.length ? windows[0] : null) : Model.activeWindow(snap)
+    activeAddress = focused ? focused.address : ""
     var minimized = expose && settings.showMinimized !== false ? Model.minimizedWindows(snap, service.exposeClass) : []
 
     var side = Math.round(Math.max(40, width * 0.045))
@@ -324,10 +355,15 @@ PanelWindow {
     windows.forEach(function(w, index) {
       var to = result.windows[w.address]
       if (!to) return
-      var onScreen = w.monitor === monitor.id && (w.pinned || w.workspace === monitor.activeWorkspace
+      // On screen once the stage is gone (going to a desktop: on that one).
+      var shown = zoom ? zoom.desktop : monitor.activeWorkspace
+      var onScreen = w.monitor === monitor.id && (w.pinned || w.workspace === shown
         || (monitor.specialWorkspace !== 0 && w.workspace === monitor.specialWorkspace))
       var from = onScreen ? Model.localRect(w, monitor)
         : { x: to.x + to.w * 0.04, y: to.y + to.h * 0.04 + 30, w: to.w * 0.92, h: to.h * 0.92 }
+      // Opening from its desktop's thumbnail: where it is in the thumbnail.
+      var zooms = !!zoom && onScreen
+      if (zooms) to = Layout.inThumbnail(from, width, zoom.rect)
       var app = service.appFor(w.cls)
       var home = Model.monitorById(snap, w.monitor) || monitor
       data[w.address] = {
@@ -336,11 +372,31 @@ PanelWindow {
         // Where the window is on its display, whichever desktop it's on:
         // what shows through it is taken from there (WindowTile).
         place: Model.localRect(w, home),
-        workspace: w.workspace, z: (w.floating ? 200 : 0) + (windows.length - index)
+        workspace: w.workspace, z: (w.floating ? 200 : 0) + (windows.length - index), zoom: zooms,
+        fullscreen: w.fullscreen
       }
       ids.push(w.address)
       rects[w.address] = to
     })
+    // App Exposé: the desktop's other windows stay where they are, fading as
+    // the app's windows step out and back as they return, so the desktop is
+    // whole where the stage meets the screen. (They blinked out on the first
+    // frame and back in on the last.) Not on the stage's way: below the
+    // app's windows, and nothing to point at or pick.
+    if (expose) {
+      var others = Model.visibleWindows(snap, monitor).filter(function(w) { return !data[w.address] })
+      others.forEach(function(w, index) {
+        var app = service.appFor(w.cls)
+        var at = Model.localRect(w, monitor)
+        data[w.address] = {
+          address: w.address, title: w.title, initialTitle: w.initialTitle, cls: w.cls, icon: app.icon, appName: app.name,
+          from: at, to: at, size: { w: w.w, h: w.h }, onScreen: true, minimized: false, place: at,
+          workspace: w.workspace, z: (others.length - index) * 0.001, fullscreen: w.fullscreen, stays: true
+        }
+        ids.push(w.address)
+      })
+    }
+
     var minIds = []
     minimized.forEach(function(w) {
       var to = minimizedResult.windows[w.address]
@@ -401,6 +457,16 @@ PanelWindow {
       data[leavingAddress] = leavingData[leavingAddress]
       ids.push(leavingAddress)
     }
+    // As a desktop's thumbnail opens into the screen, the windows of the
+    // desktop left stay where they were on the stage and fade.
+    if (zoom) {
+      for (var fadingAddress in tileData) {
+        var was = tileData[fadingAddress]
+        if (data[fadingAddress] || was.minimized || was.peek || !(was.onScreen || was.zoomFade)) continue
+        data[fadingAddress] = Object.assign({}, was, { from: was.to, onScreen: false, leaving: true, zoomFade: true, zoom: false })
+        ids.push(fadingAddress)
+      }
+    }
     // The other desktops' windows wait off the screen's edges, a page
     // apart, laid out as they'd be on the stage, for a swipe to bring in
     // (see "swiping between desktops").
@@ -438,13 +504,23 @@ PanelWindow {
       }
     }
 
-    setModel("groups", result.groups.map(function(group) {
+    // Going to a desktop, its windows aren't laid out on the stage: no app
+    // names under them.
+    setModel("groups", zoom ? [] : result.groups.map(function(group) {
       var app = service.appFor(group.key)
       return { key: group.key, x: group.x, y: group.y, w: group.w, h: group.h, icon: app.icon, name: app.name }
     }))
     setModel("tileData", data)
     setModel("tileIds", ids)
     setModel("placed", rects)
+    // A window of the desktop opening may have waited off screen for a
+    // swipe: it's in the thumbnail now. The ones left stay where they are.
+    if (zoom) {
+      for (var zoomAddress in tileItems) {
+        var zoomInfo = data[zoomAddress]
+        if (zoomInfo && (zoomInfo.zoom || zoomInfo.zoomFade)) tileItems[zoomAddress].settleAt(0)
+      }
+    }
     setModel("minimizedIds", minIds)
     startSlideIns()
     if (switchedInPlace) {
@@ -707,7 +783,7 @@ PanelWindow {
     }
     peekTarget = peekOrder[peekAt + peekTargetPage]
     peekGiveUp.restart()
-    service.focusDesktop(peekTarget)
+    service.switchDesktop(peekTarget)
   }
 
   // Hyprland is on the desktop the stage slid to: it becomes the stage's
@@ -800,6 +876,9 @@ PanelWindow {
   // Where each on-screen window was when the screen was captured. Its title
   // bar and border only come from the capture while it is still there.
   property var ghostRects: ({})
+  // The window that had the keys then: its border in the capture is the
+  // active one, the others' the inactive one (WindowTile).
+  property string ghostActive: ""
 
   function takeGhostRects() {
     var rects = {}
@@ -808,6 +887,7 @@ PanelWindow {
       if (info.onScreen) rects[address] = info.from
     }
     ghostRects = rects
+    ghostActive = activeAddress
   }
 
   Connections {
@@ -887,6 +967,135 @@ PanelWindow {
   function holdPointer() {
     pointerStill = true
     stillAt = pointerWatch.hovered ? pointerWatch.point.scenePosition : null
+  }
+
+  // ---- going to a desktop from the Spaces bar ------------------------------------------
+  //
+  // Its thumbnail opens into the screen, like an app on a phone: the
+  // desktop (zoomCard, its wallpaper) grows from the thumbnail to the whole
+  // screen, over the stage, its windows (WindowTile, info.zoom) from where
+  // they are in the thumbnail to where they are on screen (rebuild(),
+  // Layout.inThumbnail), while the windows of the desktop left fade where
+  // they are. It starts with the click, from what the stage knows of the
+  // desktop; Hyprland goes there meanwhile, under it (Service.close). With
+  // the bar folded into names (a desktop's number on the keyboard), it opens
+  // from its name.
+
+  property var zoomInto: null       // { desktop, rect: where it opens from, on the stage, fromName }
+  // From a name, the desktop comes in as it starts to open: there's no
+  // thumbnail there to grow from.
+  readonly property real zoomShown: zoomInto && zoomInto.fromName ? 1 - smooth(0.8, 1, e) : 1
+
+  function closeOnDesktop(id) {
+    var thumb = spacesBar.thumbs[id]
+    var rect = !thumb ? null : spacesBar.expand > 0.5 ? thumb.pictureRect() : thumb.nameRect(stageWidth / Math.max(1, stageHeight))
+    zoomInto = rect ? { desktop: id, rect: rect, fromName: spacesBar.expand <= 0.5 } : null
+    service.close({ desktop: id, zoom: !!zoomInto })
+    if (zoomInto) rebuild()
+  }
+
+  Connections {
+    target: win.service
+    // Done closing, or taken back by the fingers on the way: nothing opens
+    // any more, and a stage still up lays out its own desktop again.
+    function onClosingChanged() {
+      if (win.service.closing || !win.zoomInto) return
+      win.zoomInto = null
+      win.rebuild()
+    }
+  }
+
+  // The window that has the keys once the stage is gone: its border is the
+  // active one (WindowTile).
+  property string activeAddress: ""
+  readonly property string focusTarget: service && service.exitAddress ? service.exitAddress : activeAddress
+
+  // ---- what Hyprland shows through a window ---------------------------------------------
+  //
+  // Hyprland blurs what's behind a translucent window, unless the window's
+  // app asks it not to (ext-background-effect: foot does, unless told to
+  // blur). Nothing says which. So once the stage has opened, it finds out
+  // for each window that was on screen, from the screen as it was then
+  // (blurProbe, shaders/blurprobe.frag), and remembers it per app
+  // (Service.blurBehind), for windows of other desktops too. A window then
+  // lands showing what Hyprland shows through it (WindowTile's pane).
+
+  property var blurBehindHere: ({})     // by window, this opening
+  property var probeQueue: []
+  property string probing: ""
+  property bool probed: false
+
+  function blurBehindFor(address, cls) {
+    var here = blurBehindHere[address]
+    if (here !== undefined) return here
+    var learned = service && service.blurBehind ? service.blurBehind[cls] : undefined
+    return learned === undefined ? true : learned
+  }
+
+  onSettledChanged: if (settled && !probed) startProbes()
+
+  function startProbes() {
+    probed = true
+    if (!screenGhost.hasContent || !windowBlur.texture) return
+    var queue = []
+    for (var address in ghostRects) {
+      var tile = tileItems[address]
+      if (tile && tile.hasContent) queue.push(address)
+    }
+    probeQueue = queue
+    probeNext()
+  }
+
+  function probeNext() {
+    if (!showsHere || probeQueue.length === 0) {
+      probing = ""
+      return
+    }
+    var queue = probeQueue.slice()
+    probing = queue.shift()
+    probeQueue = queue
+    probeTimer.restart()
+  }
+
+  function resetProbes() {
+    probeTimer.stop()
+    probeQueue = []
+    probing = ""
+    probed = false
+    blurBehindHere = ({})
+  }
+
+  // Red: the points of the window where what was behind it is closer to the
+  // sharp wallpaper; green: closer to the blurred one; blue: the points that
+  // let the desktop through (each out of 255 for all of them).
+  function probeResult(address, sharp, blurred, through) {
+    // Too few points could tell, or they don't clearly agree: no telling.
+    if (sharp + blurred < 12 || (sharp < blurred * 2 && blurred < sharp * 2)) return
+    var isBlurred = blurred > sharp
+    var next = Object.assign({}, blurBehindHere)
+    next[address] = isBlurred
+    blurBehindHere = next
+    var info = tileData[address]
+    if (info && service) service.learnBlurBehind(info.cls, isBlurred)
+  }
+
+  // A frame or two for the probe's textures, then its one pixel.
+  Timer {
+    id: probeTimer
+    interval: 60
+    onTriggered: {
+      if (!win.showsHere || win.probing === "" || !blurProbe.ready) {
+        win.probeNext()
+        return
+      }
+      var address = win.probing
+      blurProbe.grabToImage(function(result) {
+        probeReader.address = address
+        probeReader.source = result.url
+        probeReader.loadImage(result.url)
+        if (probeReader.isImageLoaded(result.url)) probeReader.read()
+      }, Qt.size(1, 1))
+    }
   }
 
   // ---- dragging windows ----------------------------------------------------------------
@@ -1008,7 +1217,7 @@ PanelWindow {
     else if (key === Qt.Key_Backtab) cycle(false)
     else if (key >= Qt.Key_1 && key <= Qt.Key_9 && mission) {
       var desktop = desktopIds[key - Qt.Key_1]
-      if (desktop !== undefined) service.close({ desktop: desktop })
+      if (desktop !== undefined) closeOnDesktop(desktop)
     } else event.accepted = false
   }
 
@@ -1076,6 +1285,9 @@ PanelWindow {
           asynchronous: true
           cache: true
           smooth: true
+          // For a desktop opening from its thumbnail (zoomCard), drawn as
+          // small as the thumbnail. Full size reads the full-size picture.
+          mipmap: true
         }
 
         // The blur itself never changes, only how much of it shows: rendered
@@ -1096,23 +1308,16 @@ PanelWindow {
           layer.textureSize: Qt.size(Math.max(1, Math.round(width / 2)), Math.max(1, Math.round(height / 2)))
         }
 
-        // What shows through windows that let the desktop through (a
-        // terminal at 55%, a translucent browser theme), the way Hyprland
-        // shows it: the wallpaper, blurred about as much as Hyprland's own
-        // blur does, in full color. WindowTile draws it under each window,
-        // from where the window is. Rendered once, like the blur above.
-        MultiEffect {
-          id: windowBlurLayer
-          anchors.fill: parent
-          source: wallpaperImage
-          visible: false
-          blurEnabled: true
-          blurMax: 32
-          blur: 0.4
-          autoPaddingEnabled: false
-          layer.enabled: true
-          layer.smooth: true
-          layer.textureSize: Qt.size(Math.max(1, Math.round(width / 2)), Math.max(1, Math.round(height / 2)))
+        // What shows through windows that let the desktop through: the
+        // wallpaper blurred the way Hyprland blurs it, at the display's
+        // pixels (HyprBlur). WindowTile draws it under each window, from
+        // where the window is.
+        HyprBlur {
+          id: windowBlur
+          source: wallpaperImage.status === Image.Ready ? wallpaperImage : null
+          crop: backdrop.crop
+          config: win.service ? win.service.looks.blur : null
+          pixels: Qt.size(Math.round(win.stageWidth * win.dpr), Math.round(win.stageHeight * win.dpr))
         }
 
         ShaderEffect {
@@ -1125,6 +1330,8 @@ PanelWindow {
           readonly property real blurShown: win.preparing ? 0.5 : win.smooth(0, 0.6, win.e)
           property real blurAmount: backdrop.blurs && blurShown > 0.01 ? blurShown : 0
           property real dim: backdrop.dim * win.e
+          property vector4d edges: win.edgeHoles
+          property real edgesOpen: win.edgesOpen
           fragmentShader: Qt.resolvedUrl("shaders/backdrop.frag.qsb")
         }
 
@@ -1141,6 +1348,9 @@ PanelWindow {
           property vector4d crop: backdrop.crop
           property real blurAmount: backdrop.blurs ? 1 : 0
           property real dim: backdrop.dim
+          // The open stage's: no holes for the bar.
+          property vector4d edges: Qt.vector4d(0, 0, 0, 0)
+          property real edgesOpen: 0
           fragmentShader: Qt.resolvedUrl("shaders/backdrop.frag.qsb")
         }
       }
@@ -1198,7 +1408,10 @@ PanelWindow {
           y: modelData.edge === "bottom" ? win.stageHeight - modelData.size + slide : modelData.edge === "top" ? -slide : 0
           width: horizontal ? win.stageWidth : modelData.size
           height: horizontal ? modelData.size : win.stageHeight
-          opacity: 1 - screenGhost.fade
+          // Over a desktop opening from its thumbnail, as over the windows.
+          z: win.zoomInto ? 1900 : 0
+          // At rest the real bar shows instead (edgesOpen).
+          opacity: (1 - screenGhost.fade) * (1 - win.edgesOpen)
           visible: opacity > 0.01 && screenGhost.hasContent
 
           // Just this edge of the capture, not a copy of the whole screen.
@@ -1232,7 +1445,7 @@ PanelWindow {
           y: modelData.y
           width: modelData.w
           height: modelData.h
-          z: 1050
+          z: win.zoomInto ? 1900 : 1050
           sourceItem: screenGhost
           sourceRect: Qt.rect(modelData.x, modelData.y, modelData.w, modelData.h)
           live: false
@@ -1336,6 +1549,97 @@ PanelWindow {
         height: 1
         color: Qt.rgba(1, 1, 1, 0.25)
         opacity: win.smooth(0.5, 1, win.p)
+      }
+
+      // The blur probe (see "what Hyprland shows through a window"): the
+      // screen where the window being probed was, and the probe itself, one
+      // pixel. Neither is drawn on the stage.
+      ShaderEffectSource {
+        id: probeScreen
+        width: 1
+        height: 1
+        visible: false
+        hideSource: false
+        live: true
+        sourceItem: blurProbe.rect ? screenGhost : null
+        sourceRect: blurProbe.rect ? Qt.rect(blurProbe.rect.x, blurProbe.rect.y, blurProbe.rect.w, blurProbe.rect.h) : Qt.rect(0, 0, 1, 1)
+        // At the screen's own pixels: the probe compares them one by one.
+        textureSize: blurProbe.rect ? Qt.size(Math.max(1, Math.round(blurProbe.rect.w * win.dpr)), Math.max(1, Math.round(blurProbe.rect.h * win.dpr)))
+          : Qt.size(1, 1)
+      }
+
+      ShaderEffect {
+        id: blurProbe
+        readonly property var rect: win.probing !== "" ? (win.ghostRects[win.probing] || null) : null
+        readonly property var tile: win.probing !== "" ? win.tileFor(win.probing) : null
+        readonly property var info: win.probing !== "" ? (win.tileData[win.probing] || null) : null
+        readonly property bool ready: !!rect && !!tile && !!info && !!windowBlur.texture
+        width: 1
+        height: 1
+        visible: false
+        property var screenPixels: probeScreen
+        property var windowPixels: tile ? tile.preview : probeScreen
+        property var wallpaper: wallpaperImage
+        property var blurred: windowBlur.texture
+        property vector4d area: rect ? Qt.vector4d(rect.x / win.stageWidth, rect.y / win.stageHeight, rect.w / win.stageWidth, rect.h / win.stageHeight)
+          : Qt.vector4d(0, 0, 1, 1)
+        property vector4d crop: backdrop.crop
+        // As the window was drawn in the capture: active or not as it was then.
+        property real alpha: !info || !win.service ? 1 : Model.windowAlpha(win.service.windowLooks[win.probing] || null, win.service.looks,
+          (info.fullscreen & 2) ? "fullscreen" : win.ghostActive === win.probing ? "active" : "inactive")
+        property real blurAlpha: win.service && win.service.looks.blur.ignoreOpacity ? 1 : alpha
+        fragmentShader: Qt.resolvedUrl("shaders/blurprobe.frag.qsb")
+      }
+
+
+      Canvas {
+        id: probeReader
+        width: 1
+        height: 1
+        visible: false
+        renderStrategy: Canvas.Immediate
+        property string address: ""
+        property url source
+        onImageLoaded: read()
+        function read() {
+          if (address === "") return
+          var ctx = getContext("2d")
+          ctx.clearRect(0, 0, 1, 1)
+          ctx.drawImage(source, 0, 0)
+          var pixel = ctx.getImageData(0, 0, 1, 1).data
+          unloadImage(source)
+          var probed = address
+          address = ""
+          win.probeResult(probed, pixel[0], pixel[1], pixel[2])
+          win.probeNext()
+        }
+      }
+
+      // The desktop picked in the Spaces bar, opening from its thumbnail into
+      // the screen (closeOnDesktop): its wallpaper, as the screen shows it,
+      // under its windows (WindowTile, info.zoom) and over the rest of the
+      // stage, the bar too. Its windows grow with it, from the same place
+      // at the same pace, so they stay where they are on it.
+      ShaderEffect {
+        id: zoomCard
+        readonly property var from: win.zoomInto ? win.zoomInto.rect : null
+        visible: !!from && win.showsHere && opacity > 0.01
+        z: 1400
+        x: from ? from.x * win.e : 0
+        y: from ? from.y * win.e : 0
+        width: from ? win.stageWidth + (from.w - win.stageWidth) * win.e : 0
+        height: from ? win.stageHeight + (from.h - win.stageHeight) * win.e : 0
+        opacity: win.zoomShown
+        property var wallpaper: wallpaperImage
+        property vector4d crop: backdrop.crop
+        property vector4d edges: win.edgeHoles
+        property real edgesOpen: win.edgesOpen
+        property vector4d place: Qt.vector4d(x / Math.max(1, win.stageWidth), y / Math.max(1, win.stageHeight),
+                                             width / Math.max(1, win.stageWidth), height / Math.max(1, win.stageHeight))
+        property size rectSize: Qt.size(width * win.dpr, height * win.dpr)
+        // The thumbnail's corners (DesktopThumb), none on the screen.
+        property real radius: (from ? Math.min(9, from.h / 2) : 0) * win.e * win.dpr
+        fragmentShader: Qt.resolvedUrl("shaders/card.frag.qsb")
       }
 
       Repeater {

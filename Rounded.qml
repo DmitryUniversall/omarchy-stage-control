@@ -16,6 +16,13 @@ Item {
   // The size the content is laid out and rendered at.
   property real contentWidth: width
   property real contentHeight: height
+  // The rendered content's size in pixels, when it has to be exact (a
+  // window at rest, one for one with the screen's pixels); else the
+  // content's size at the window's scale.
+  property size textureSize: Qt.size(0, 0)
+  // Display pixels per item pixel: the corners' soft edge is one display
+  // pixel wide.
+  property real pixelRatio: 1
 
   default property alias data: content.data
   // The content as rendered, before the corners are cut: a texture anything
@@ -33,9 +40,10 @@ Item {
 
     layer.enabled: true
     layer.smooth: true
+    layer.textureSize: rounded.textureSize
     layer.effect: ShaderEffect {
-      property size rectSize: Qt.size(rounded.width, rounded.height)
-      property real radius: rounded.radius
+      property size rectSize: Qt.size(rounded.width * rounded.pixelRatio, rounded.height * rounded.pixelRatio)
+      property real radius: rounded.radius * rounded.pixelRatio
       property vector4d background: Qt.vector4d(rounded.color.r, rounded.color.g, rounded.color.b, rounded.color.a)
       fragmentShader: Qt.resolvedUrl("shaders/rounded.frag.qsb")
     }

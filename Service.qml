@@ -171,6 +171,115 @@ Item {
     }
     registering = true
     bindsRun.start(["/usr/bin/hyprctl", "-j", "binds"])
+    animationsRun.start(["/usr/bin/hyprctl", "-j", "animations"])
+    looksRun.start(["/usr/bin/hyprctl", "-j", "--batch", Model.LOOK_OPTIONS.map(function(option) {
+      return "getoption " + option
+    }).join("; ")])
+  }
+
+  // How Hyprland draws a window besides its border: the blur behind it, its
+  // shadow, its opacity (Model.looksFrom). Read again with every
+  // registration, so after every config reload.
+  property var looks: Model.looksFrom([])
+  Run {
+    id: looksRun
+    maxBytes: 64 * 1024
+    timeoutMs: 4000
+    onFinished: function(ok, output) {
+      if (!ok) return
+      try {
+        root.looks = Model.looksFrom(Model.splitJson(output))
+      } catch (e) {
+        console.warn("Stage Control: couldn't read how Hyprland draws windows:", e)
+      }
+    }
+  }
+
+  // What window rules give each window (Model.windowLooksFrom): its
+  // opacity active, inactive and fullscreen, its corners and border. Read
+  // for the windows not read yet as the stage opens and as windows turn up
+  // while it's open; a window's rules hardly change while it's up.
+  property var windowLooks: ({})
+  property bool windowLooksAgain: false
+
+  function readWindowLooks() {
+    if (!snap) return
+    if (windowLooksRun.running) {
+      windowLooksAgain = true
+      return
+    }
+    var known = windowLooks
+    var present = {}
+    var missing = []
+    snap.windows.forEach(function(w) {
+      present[w.address] = true
+      if (!known[w.address]) missing.push(w.address)
+    })
+    // Windows gone: their rules go too.
+    var kept = {}
+    var dropped = false
+    for (var address in known) {
+      if (present[address]) kept[address] = known[address]
+      else dropped = true
+    }
+    if (dropped) windowLooks = kept
+    if (missing.length === 0) return
+    windowLooksRun.addresses = missing
+    windowLooksRun.start(["/usr/bin/hyprctl", "-j", "--batch", Model.windowPropsBatch(missing)])
+  }
+
+  Run {
+    id: windowLooksRun
+    property var addresses: []
+    maxBytes: 256 * 1024
+    timeoutMs: 3000
+    onFinished: function(ok, output) {
+      if (ok) {
+        try {
+          var read = Model.windowLooksFrom(Model.splitJson(output), addresses)
+          var next = Settings.clone(root.windowLooks)
+          for (var address in read) next[address] = read[address]
+          root.windowLooks = next
+        } catch (e) {
+          console.warn("Stage Control: couldn't read the windows' rules:", e)
+        }
+      }
+      if (root.windowLooksAgain) {
+        root.windowLooksAgain = false
+        root.readWindowLooks()
+      }
+    }
+  }
+
+  // Whether Hyprland blurs what's behind an app's windows, by window class:
+  // learned from the screen (Overview's blur probe). An app can ask for no
+  // blur (ext-background-effect: foot does unless told to blur), and nothing
+  // else tells.
+  property var blurBehind: ({})
+  function learnBlurBehind(cls, blurred) {
+    if (typeof cls !== "string" || cls === "" || blurBehind[cls] === blurred) return
+    var next = Settings.clone(blurBehind)
+    next[cls] = blurred
+    blurBehind = next
+  }
+
+  // How long Hyprland takes to go to another desktop, and to turn a
+  // window's border active (finishCloseWhenStill). Read again with every
+  // registration, so after every config reload.
+  property var workspaceAnimationMs: null
+  property var borderAnimationMs: null
+  Run {
+    id: animationsRun
+    maxBytes: 64 * 1024
+    timeoutMs: 4000
+    onFinished: function(ok, output) {
+      var json = null
+      if (ok) {
+        try { json = JSON.parse(output) } catch (e) { json = null }
+      }
+      root.workspaceAnimationMs = Model.workspaceAnimationMs(json)
+      root.borderAnimationMs = Model.borderAnimationMs(json)
+    }
   }
 
   Run {
@@ -267,7 +376,7 @@ Item {
 
   property var snap: null
   property var layers: ({})
-  property var decor: ({ border: 0, bar: 0, rounding: 0 })
+  property var decor: ({ border: 0, bar: 0, rounding: 0, active: null, inactive: null })
   property var swipeConfig: Model.swipeFrom([])
   property int snapVersion: 0
   property var snapWaiters: []
@@ -303,6 +412,7 @@ Item {
     }
     var started = snapRun.start(["/usr/bin/hyprctl", "-j", "--batch",
       "clients; monitors; workspaces; layers; getoption general:border_size; getoption plugin:hyprbars:bar_height; getoption decoration:rounding; "
+      + "getoption general:col.active_border; getoption general:col.inactive_border; "
       + "getoption gestures:workspace_swipe_distance; getoption gestures:workspace_swipe_invert; "
       + "getoption gestures:workspace_swipe_cancel_ratio; getoption gestures:workspace_swipe_min_speed_to_force; "
       + "getoption gestures:workspace_swipe_forever"])
@@ -333,6 +443,7 @@ Item {
             root.swipeConfig = Model.swipeFrom(rest)
             root.snap = Model.snapshot(parts[0], parts[1], parts[2])
             root.snapVersion++
+            if (root.shown) root.readWindowLooks()
             root.lastGoodRead = read
             good = true
           }
@@ -390,6 +501,7 @@ Item {
         // Another desktop came on screen: the stage turns to it at once
         // (Overview, "sliding desktops") rather than after the pause the
         // other events wait out.
+        if (name === "workspacev2" && root.handingKeys && !handoverTimer.running) root.endHandover()
         followTimer.stop()
         root.refresh(null)
       } else if (root.followedEvents.indexOf(name) >= 0) {
@@ -535,6 +647,51 @@ Item {
     if (validId(id)) Hyprland.dispatch('hl.dsp.focus({ workspace = "' + id + '" })')
   }
 
+  // Another desktop while the stage is open (a swipe on the stage,
+  // Ctrl+←/→). While the stage holds the keys, Hyprland goes to the desktop
+  // but keeps the window that had the keys, and gives them back to it when
+  // the stage closes, going back to its desktop: the stage closed on the
+  // desktop it was opened on, not the one it was on. So the stage lets go
+  // of the keys for the switch (Overview.keyboardFocus): Hyprland gives them
+  // to a window of this desktop, which is still on screen, then goes to the
+  // new one and gives them to its window. Then the stage takes them back.
+  property bool handingKeys: false
+  property int handoverDesktop: 0
+
+  function switchDesktop(id) {
+    if (!validId(id)) return
+    if (!shown || closing) {
+      focusDesktop(id)
+      return
+    }
+    handoverDesktop = id
+    handingKeys = true
+    handoverTimer.restart()
+  }
+
+  Timer {
+    id: handoverTimer
+    // A frame or two for Hyprland to take the keys back from the stage.
+    interval: 40
+    onTriggered: {
+      root.goTo(root.handoverDesktop, "")
+      handoverEndTimer.restart()
+    }
+  }
+
+  // Hyprland is on the new desktop (onRawEvent), or never went there.
+  function endHandover() {
+    handoverTimer.stop()
+    handoverEndTimer.stop()
+    handingKeys = false
+    handoverDesktop = 0
+  }
+  Timer {
+    id: handoverEndTimer
+    interval: 400
+    onTriggered: root.endHandover()
+  }
+
   function closeWindow(address) {
     if (Model.isAddress(address)) Hyprland.dispatch('hl.dsp.window.close({ window = "address:' + address + '" })')
     followTimer.restart()
@@ -572,6 +729,19 @@ Item {
     var lua = Model.planLua(moves, focus, focusAddress)
     if (lua) planRun.start(["/usr/bin/hyprctl", "eval", lua])
     else refresh(null)
+  }
+
+  // To desktop `desktop`, then window `address` on it, in one eval and in
+  // turn with the plans. Hyprland slides to the desktop under the stage;
+  // the stage stays until it's done (finishCloseWhenStill).
+  property real switchedAt: 0
+  function goTo(desktop, address) {
+    whenPlansDone(function() {
+      var lua = Model.planLua([], root.validId(desktop) ? desktop : 0, address)
+      if (!lua) return
+      root.switchedAt = Date.now()
+      planRun.start(["/usr/bin/hyprctl", "eval", lua])
+    })
   }
 
   // A minimized window (Title Bars keeps them on special:minimized) comes back
@@ -641,7 +811,7 @@ Item {
       var list = root.desktopsFor(monitor.name).map(function(d) { return d.id })
       var index = list.indexOf(monitor.activeWorkspace)
       var next = list[index + direction]
-      if (next !== undefined) root.focusDesktop(next)
+      if (next !== undefined) root.switchDesktop(next)
     })
   }
 
@@ -675,6 +845,14 @@ Item {
   property var readyScreens: ({})
   property int openSerial: 0
   readonly property bool shown: mode !== ""
+  // The stage gives the keys back (Overview.keyboardFocus) as it starts to
+  // close, and as soon as the fingers start to close it: Hyprland turns the
+  // window under it active, border and all, while the stage still covers
+  // it. Closed all the way by the fingers, the keys only came back as the
+  // stage went, and the border turned active in plain sight.
+  readonly property bool keysOut: shown && (closing || (tracking && swipeIntent === "close"))
+  property real keysOutAt: 0
+  onKeysOutChanged: if (keysOut) keysOutAt = Date.now()
   readonly property bool interactive: shown && revealed && !tracking && !closing
   readonly property real speedFactor: settings ? settings.speed / 100 : 1
 
@@ -707,6 +885,7 @@ Item {
   // Shows the overlays for `which`; they capture every window and report
   // ready, then the opening animation starts (or the fingers take over).
   function startMode(which, byGesture, forcedClass) {
+    stillTimer.stop()
     progressAnim.stop()
     animating = false
     closing = false
@@ -737,6 +916,7 @@ Item {
       }
       var wasShown = root.shown
       root.mode = which
+      root.readWindowLooks()
       if (wasShown && root.revealed) {
         if (!root.tracking) root.animateTo(1)
         return
@@ -793,20 +973,38 @@ Item {
     // window that last had them, going to its desktop if need be. A window
     // or desktop to go to is asked for once that's done, so Hyprland's
     // own refocus can't take the stage back to where it was.
-    if (exitAddress) {
+    var awayDesktop = exitAddress && !options.noFocus ? Model.hiddenDesktopOf(snap, exitAddress) : 0
+    if (awayDesktop) {
+      // A window on another desktop (App Exposé): its desktop first, then
+      // zoom into the window where it is there. Zooming first, it faded
+      // where it was on the stage, then jumped to its place as Hyprland
+      // went there, and Hyprland's own slide went on after the stage.
+      var away = exitAddress
+      afterKeysReturn(function() { root.goThenClose(awayDesktop, away) })
+    } else if (exitAddress) {
       var address = exitAddress
       if (!options.noFocus) afterKeysReturn(function() { root.focusWindow(address) })
+      animateTo(0)
+    } else if (validId(options.desktop) && options.zoom === true) {
+      // The stage opens the desktop from its thumbnail at once, from what it
+      // knows of it (Overview.closeOnDesktop); Hyprland goes there under it.
+      var zoomDesktop = options.desktop
+      afterKeysReturn(function() { root.goTo(zoomDesktop, "") })
       animateTo(0)
     } else if (validId(options.desktop)) {
       // Switch first, then zoom into the new desktop's windows.
       var desktop = options.desktop
-      afterKeysReturn(function() {
-        root.focusDesktop(desktop)
-        root.refresh(function() { root.animateTo(0) })
-      })
+      afterKeysReturn(function() { root.goThenClose(desktop, "") })
     } else {
       animateTo(0, options.velocity || 0)
     }
+  }
+
+  // Goes there (goTo), and closes once the stage has what's on screen
+  // there.
+  function goThenClose(desktop, address) {
+    goTo(desktop, address)
+    whenPlansDone(function() { if (root.closing) root.animateTo(0) })
   }
 
   // `action` a moment after the stage gave the keys back (see close()), if
@@ -826,7 +1024,38 @@ Item {
     }
   }
 
+  // Closed, but Hyprland may still be sliding to the desktop the stage went
+  // to (goTo), or turning the border of the window that got the keys
+  // active. The stage, at rest, shows the desktop as it will be: it stays
+  // on screen until Hyprland is done, so that doesn't show after it.
+  function finishCloseWhenStill() {
+    var slideMs = workspaceAnimationMs === null ? 500 : workspaceAnimationMs
+    var borderMs = borderAnimationMs === null ? 300 : borderAnimationMs
+    var now = Date.now()
+    var until = 0
+    // The window Hyprland goes to gets the keys then too.
+    if (switchedAt > 0) until = switchedAt + Math.max(slideMs, borderMs)
+    if (keysOutAt > 0) until = Math.max(until, keysOutAt + borderMs)
+    var left = until + 40 - now
+    if (left > 0 && left <= Math.max(slideMs, borderMs) + 40) {
+      stillTimer.interval = Math.round(left)
+      stillTimer.restart()
+    } else {
+      finishClose()
+    }
+  }
+  Timer {
+    id: stillTimer
+    onTriggered: if (root.closing && root.progress <= 0.001) root.finishClose()
+  }
+  // Meanwhile the pointer already reaches the windows (Overview.mask).
+  readonly property bool holdingStill: stillTimer.running
+
   function finishClose() {
+    stillTimer.stop()
+    switchedAt = 0
+    keysOutAt = 0
+    endHandover()
     deskOverview = null
     progressAnim.stop()
     animating = false
@@ -846,7 +1075,7 @@ Item {
     property: "progress"
     onFinished: {
       root.animating = false
-      if (root.closing && root.progress <= 0.001) root.finishClose()
+      if (root.closing && root.progress <= 0.001) root.finishCloseWhenStill()
     }
   }
   // Opening or closing on its own (not following the fingers). A flag rather
@@ -862,7 +1091,7 @@ Item {
     if (distance < 0.001) {
       animating = false
       progress = target
-      if (closing && target === 0) finishClose()
+      if (closing && target === 0) finishCloseWhenStill()
       return
     }
     var base = target > progress ? 460 : 380

@@ -1,8 +1,10 @@
 import QtQuick
 import QtQuick.Effects
+import QtQuick.Shapes
 import Quickshell
 import Quickshell.Wayland
 import Quickshell.Hyprland
+import "Model.js" as Model
 
 // One window on the stage: a live preview that travels from where the
 // window really is (progress 0) to its place in the spread (progress 1), with
@@ -31,6 +33,41 @@ Item {
   readonly property bool lit: active && (selected || (!!overview && overview.windowHighlight !== "never"))
   readonly property bool exiting: !!service && service.exitAddress === modelData
   readonly property bool dragging: !!overview && overview.dragAddress === modelData
+
+  // ---- at rest, as Hyprland draws it ----------------------------------------------
+  //
+  // Where the stage meets the screen (progress 0: as the stage opens, and as
+  // it ends closing) a window is drawn the way Hyprland draws it there: on
+  // the display's pixels, at its opacity, over Hyprland's blur, with its
+  // border and shadow (Service.looks). Nothing changes the moment the stage
+  // goes, or the moment it comes.
+  readonly property var looks: service ? service.looks : null
+  // What window rules give this window (Service.windowLooks), or null.
+  readonly property var rules: service && service.windowLooks ? (service.windowLooks[modelData] || null) : null
+  readonly property real dpr: overview ? overview.dpr : 1
+  // Opening from a desktop's thumbnail (Overview.closeOnDesktop).
+  readonly property bool zooms: !!info && info.zoom === true
+  // Another app's window in App Exposé, staying where it is on the desktop
+  // (Overview.rebuild()).
+  readonly property bool stays: !!info && info.stays === true
+  // Fullscreen, Hyprland draws neither border nor shadow, nor corners.
+  readonly property bool fullscreen: !!info && (info.fullscreen & 2) !== 0
+  // Gets the keys once the stage is gone: the active window's looks.
+  readonly property bool focusTarget: !!overview && overview.focusTarget === modelData
+  readonly property real restAlpha: Model.windowAlpha(rules, looks, fullscreen ? "fullscreen" : focusTarget ? "active" : "inactive")
+  // Its border and corners at rest: its rules', else the settings'.
+  readonly property real restBorder: rules && rules.border !== null ? rules.border : service ? service.decor.border : 0
+  readonly property bool decorated: !rules || rules.decorate
+  // Opaque on the stage, as Hyprland draws it at rest.
+  readonly property real windowAlpha: restAlpha + (1 - restAlpha) * e
+  readonly property bool atRest: e <= 0 && !dragging && !dropping
+  // Where Hyprland puts it on the display's pixels (CBox::round): at rest
+  // its pixels land on the screen's one for one, and text is as sharp as on
+  // the desktop. In display pixels.
+  readonly property int restLeft: Math.round(from.x * dpr)
+  readonly property int restTop: Math.round(from.y * dpr)
+  readonly property int restWidth: Math.max(1, Math.round(from.x * dpr + from.w * dpr - restLeft))
+  readonly property int restHeight: Math.max(1, Math.round(from.y * dpr + from.h * dpr - restTop))
   readonly property bool hasContent: capture.hasContent
   // The live preview as rendered here, for the Spaces bar's picture of this
   // desktop (DesktopThumb), so it needn't capture the window again.
@@ -55,7 +92,10 @@ Item {
 
   // Place in the spread. Animates when the layout changes while open (a
   // window closes, the Spaces bar expands), not while opening or closing.
-  readonly property bool animateLayout: !!service && service.revealed && !service.tracking && p > 0.99
+  // Nor once it's closing: the stage then goes where the windows are, from
+  // where they were (a desktop picked in the Spaces bar opens from its
+  // thumbnail, Overview.closeOnDesktop).
+  readonly property bool animateLayout: !!service && service.revealed && !service.tracking && !service.closing && p > 0.99
   property real tx: info ? info.to.x : 0
   property real ty: info ? info.to.y : 0
   property real tw: info ? info.to.w : 1
@@ -210,24 +250,72 @@ Item {
     }
   }
 
-  x: dropping ? lerp(dropFrom.x, dropTo.x, dropT)
+  x: atRest ? restLeft / dpr
+    : dropping ? lerp(dropFrom.x, dropTo.x, dropT)
     : dragging ? overview.dragPoint.x - overview.dragGrab.x * tw * dragScale
     : lerp(from.x, tx, e)
-  y: dropping ? lerp(dropFrom.y, dropTo.y, dropT)
+  y: atRest ? restTop / dpr
+    : dropping ? lerp(dropFrom.y, dropTo.y, dropT)
     : dragging ? overview.dragPoint.y - overview.dragGrab.y * th * dragScale
     : lerp(from.y, ty, e)
-  width: dropping ? lerp(dropFrom.w, dropTo.w, dropT) : dragging ? tw * dragScale : lerp(from.w, tw, e)
-  height: dropping ? lerp(dropFrom.h, dropTo.h, dropT) : dragging ? th * dragScale : lerp(from.h, th, e)
+  width: atRest ? restWidth / dpr : dropping ? lerp(dropFrom.w, dropTo.w, dropT) : dragging ? tw * dragScale : lerp(from.w, tw, e)
+  height: atRest ? restHeight / dpr : dropping ? lerp(dropFrom.h, dropTo.h, dropT) : dragging ? th * dragScale : lerp(from.h, th, e)
   // Above the Spaces bar (z 1100) while dragged or flying into a desktop.
-  z: dragging || dropping ? 2000 : exiting ? 900 : lit ? 500 : (info ? info.z : 0)
+  // Opening from a desktop's thumbnail, over the Spaces bar it starts in.
+  z: dragging || dropping ? 2000 : info && info.zoom ? 1500 + info.z : exiting ? 900 : lit ? 500 : (info ? info.z : 0)
   opacity: (dropping && dropFades ? 1 - dropT * 0.85 : onScreen ? 1 : smooth(0.15, 0.85, p)) * closeFade
+    * (zooms && overview ? overview.zoomShown : 1) * (stays ? 1 - smooth(0.05, 0.45, e) : 1)
   visible: !!info
 
   // Hover lift, like macOS.
   scale: closingOut ? 0.94 : lit ? 1.025 : 1
   Behavior on scale { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
 
-  readonly property real cornerRadius: lerp(overview ? overview.windowRounding : 0, 10, smooth(0, 0.5, e))
+  // Hyprland's corners at rest (none fullscreen), the stage's on the stage.
+  // Opening from a thumbnail, the corners grow with the window.
+  readonly property real restRadius: fullscreen || !overview ? 0 : rules && rules.rounding !== null ? rules.rounding : overview.windowRounding
+  readonly property real cornerRadius: zooms ? restRadius * width / Math.max(1, from.w)
+    : lerp(restRadius, 10, smooth(0, 0.5, e))
+
+  // Hyprland's shadow, where the window comes to rest; the stage's own
+  // takes over as it leaves. (It came in only once the stage was gone.)
+  ShaderEffect {
+    id: hyprShadow
+    readonly property var config: tile.looks ? tile.looks.shadow : null
+    readonly property var d: tile.service ? tile.service.decor : null
+    // The window's size here to its real size.
+    readonly property real s: tile.width / Math.max(1, tile.from.w)
+    readonly property real borderSize: tile.restBorder * s
+    readonly property real reach: config ? config.range * s : 0
+    readonly property real boxScale: config ? config.scale : 1
+    // The window with its border, out by `range`, scaled about its center
+    // and moved by `offset` (CHyprDropShadowDecoration).
+    readonly property real boxWidth: (tile.width + 2 * borderSize + 2 * reach) * boxScale
+    readonly property real boxHeight: (tile.height + 2 * borderSize + 2 * reach) * boxScale
+    x: (tile.width - boxWidth) / 2 + (config ? config.offset.x * s : 0)
+    y: (tile.height - boxHeight) / 2 + (config ? config.offset.y * s : 0)
+    width: boxWidth
+    height: boxHeight
+    visible: !!config && config.enabled && config.range > 0 && !!d && tile.onScreen && !tile.fullscreen
+      && tile.decorated && (!tile.rules || tile.rules.shadow)
+      && !tile.dragging && !tile.dropping && !tile.closingOut && opacity > 0.01
+    opacity: 1 - tile.smooth(0, 0.3, tile.e)
+    property size fullSize: Qt.size(width * tile.dpr, height * tile.dpr)
+    // Hyprland's whole display pixels: the corners of the window with its
+    // border, and the reach.
+    property real radius: tile.restRadius > 0 ? Math.floor((tile.restRadius + tile.restBorder) * s * tile.dpr) : 0
+    property real range: config ? Math.floor(config.range * s * tile.dpr) : 0
+    property real power: config ? config.renderPower : 3
+    property real roundingPower: tile.rules && tile.rules.roundingPower !== null ? tile.rules.roundingPower
+      : tile.looks ? tile.looks.roundingPower : 2
+    property real sharp: config && config.sharp ? 1 : 0
+    readonly property color shade: !config ? "transparent"
+      : tile.focusTarget || !config.colorInactive ? config.color : config.colorInactive
+    property vector4d color: Qt.vector4d(shade.r, shade.g, shade.b, shade.a * tile.restAlpha)
+    property vector4d cutout: Qt.vector4d(-x * tile.dpr, -y * tile.dpr, (tile.width - x) * tile.dpr, (tile.height - y) * tile.dpr)
+    property real windowRadius: Math.round(tile.restRadius * s * tile.dpr)
+    fragmentShader: Qt.resolvedUrl("shaders/hyprshadow.frag.qsb")
+  }
 
   RectangularShadow {
     anchors.fill: frame
@@ -236,7 +324,8 @@ Item {
     blur: 34 * tile.e + (tile.dragging ? 20 : 0)
     spread: -4
     color: Qt.rgba(0, 0, 0, (tile.dragging ? 0.6 : 0.5) * tile.e)
-    visible: tile.e > 0.02
+    // Not in a thumbnail opening into the screen: the thumbnail has none.
+    visible: tile.e > 0.02 && !tile.zooms && !tile.stays
   }
 
   // The window's title bar and border from the screen capture, following the
@@ -245,8 +334,11 @@ Item {
     id: decoration
     readonly property var d: tile.service ? tile.service.decor : ({ border: 0, bar: 0 })
     readonly property var at: tile.overview ? tile.overview.ghostRects[tile.modelData] : null
+    // As captured: in its place, and active or not as it was then (with
+    // no title bars to keep, Hyprland's border is drawn instead).
     readonly property bool matches: !!at && !!tile.info && tile.info.ghost === true
       && at.x === tile.from.x && at.y === tile.from.y && at.w === tile.from.w && at.h === tile.from.h
+      && (d.bar > 0 || (!!tile.overview && tile.overview.ghostActive === tile.modelData) === tile.focusTarget)
     readonly property real s: tile.width / Math.max(1, tile.from.w)
     readonly property real above: d.border + d.bar
     sourceItem: matches && !tile.dragging && !tile.dropping ? tile.overview.screenCapture : null
@@ -255,8 +347,8 @@ Item {
     y: -above * s
     width: sourceRect.width * s
     height: sourceRect.height * s
-    opacity: 1 - tile.smooth(0, 0.3, tile.p)
-    visible: !!sourceItem && opacity > 0.01 && (d.border + d.bar) > 0
+    // Drawn as a ring (decorationRing): its middle is the window as it was.
+    visible: false
     live: false
     hideSource: false
     // A tile outlives the overlay's window (Overview.rebuild()), but a copy
@@ -272,6 +364,27 @@ Item {
     }
   }
 
+  // The capture of the title bar and border, around the window: not the
+  // window as it was, which a translucent window showed through itself.
+  ShaderEffect {
+    id: decorationRing
+    x: decoration.x
+    y: decoration.y
+    width: decoration.width
+    height: decoration.height
+    opacity: 1 - tile.smooth(0, 0.3, tile.p)
+    visible: !!decoration.sourceItem && opacity > 0.01 && (decoration.d.border + decoration.d.bar) > 0
+    property var source: decoration
+    property size fullSize: Qt.size(width * tile.dpr, height * tile.dpr)
+    readonly property real k: decoration.s * tile.dpr
+    property vector4d cutout: Qt.vector4d(decoration.d.border * k, decoration.above * k,
+      (decoration.d.border + tile.from.w) * k, (decoration.above + tile.from.h) * k)
+    property real cutoutRadius: tile.restRadius * k
+    property real roundingPower: tile.rules && tile.rules.roundingPower !== null ? tile.rules.roundingPower
+      : tile.looks ? tile.looks.roundingPower : 2
+    fragmentShader: Qt.resolvedUrl("shaders/ring.frag.qsb")
+  }
+
   // The live preview is rendered at the window's size times the first power
   // of 0.8 at or above the tile's scale: never below the size it shows at,
   // never far above it, and while the tile travels it's rendered at a new size
@@ -280,6 +393,58 @@ Item {
     var s = info ? width / Math.max(1, info.size.w) : 1
     if (!(s < 1)) return 1
     return Math.max(0.2, Math.pow(0.8, Math.floor(Math.log(s) / Math.log(0.8))))
+  }
+
+  // Hyprland's border, where the screen capture has none to give
+  // (decoration): a window of another desktop the stage closes on, the
+  // windows of a desktop opening from its thumbnail. It comes in as the
+  // window lands, as the captured one does, rather than popping up the
+  // moment the stage is gone. The active border for the window that gets
+  // the keys (Overview.focusTarget). A ring, under the window's pane.
+  Shape {
+    id: border
+    readonly property var d: tile.service ? tile.service.decor : null
+    readonly property var gradient: !d ? null : tile.focusTarget ? d.active : d.inactive
+    readonly property var colors: gradient ? gradient.colors : []
+    // The window's size here to its real size.
+    readonly property real s: tile.width / Math.max(1, tile.from.w)
+    readonly property real size: tile.restBorder * s
+    readonly property real outer: frame.radius > 0 ? frame.radius + size : 0
+    // Hyprland's angle, turning clockwise from left to right.
+    readonly property real angle: (gradient ? gradient.angle : 0) * Math.PI / 180
+    readonly property real dx: Math.cos(angle) * width / 2
+    readonly property real dy: Math.sin(angle) * height / 2
+    anchors.fill: frame
+    anchors.margins: -size
+    visible: tile.onScreen && !decoration.matches && !tile.dragging && !tile.dropping && !tile.fullscreen
+      && tile.decorated && colors.length > 0 && size > 0.3 && opacity > 0.01
+    opacity: (1 - tile.smooth(0, 0.3, tile.p)) * tile.restAlpha
+    preferredRendererType: Shape.CurveRenderer
+
+    ShapePath {
+      strokeWidth: -1
+      fillRule: ShapePath.OddEvenFill
+      fillGradient: LinearGradient {
+        x1: border.width / 2 - border.dx
+        y1: border.height / 2 - border.dy
+        x2: border.width / 2 + border.dx
+        y2: border.height / 2 + border.dy
+        GradientStop { position: 0; color: border.colors.length ? border.colors[0] : "transparent" }
+        GradientStop { position: 1; color: border.colors.length ? border.colors[border.colors.length - 1] : "transparent" }
+      }
+      PathRectangle {
+        width: border.width
+        height: border.height
+        radius: border.outer
+      }
+      PathRectangle {
+        x: border.size
+        y: border.size
+        width: Math.max(0, border.width - 2 * border.size)
+        height: Math.max(0, border.height - 2 * border.size)
+        radius: frame.radius
+      }
+    }
   }
 
   // Under the window, what Hyprland shows through it where it's
@@ -294,6 +459,14 @@ Item {
   ShaderEffect {
     anchors.fill: frame
     visible: !!backdrop
+    // Hyprland draws it at the window's opacity, unless blur:ignore_opacity.
+    // Where Hyprland doesn't blur behind the window (its app asked it not
+    // to: foot, unless told to blur), it fades as the window lands, and the
+    // wallpaper shows through sharp, as on the desktop (Overview's blur
+    // probe). It used to stay blurred to the end, and the picture sharpened
+    // the moment the stage was gone.
+    readonly property bool blurred: !tile.overview || tile.overview.blurBehindFor(tile.modelData, tile.info ? tile.info.cls : "")
+    opacity: (tile.looks && tile.looks.blur.ignoreOpacity ? 1 : tile.windowAlpha) * (blurred ? 1 : tile.smooth(0, 0.3, tile.e))
     property var backdrop: tile.overview ? tile.overview.windowBackdrop : null
     property size itemSize: Qt.size(width, height)
     property real radius: frame.radius
@@ -321,6 +494,11 @@ Item {
     color: "transparent"
     contentWidth: tile.info ? tile.info.size.w * tile.renderScale : width
     contentHeight: tile.info ? tile.info.size.h * tile.renderScale : height
+    // At full size, rendered at the size it has at rest on the display, one
+    // for one with the screen's pixels.
+    textureSize: tile.renderScale >= 1 ? Qt.size(tile.restWidth, tile.restHeight) : Qt.size(0, 0)
+    pixelRatio: tile.dpr
+    opacity: tile.windowAlpha
 
     ScreencopyView {
       id: capture
@@ -333,7 +511,7 @@ Item {
       // hold the stage, it stays live.
       // Nor while desktops slide or follow a swipe (Overview.moving).
       live: !!tile.overview && tile.overview.showsHere && !(tile.service && tile.service.animating) && !tile.overview.moving
-        && !tile.peek
+        && !tile.peek && !(tile.stays && tile.opacity < 0.01)
     }
   }
 
@@ -356,6 +534,7 @@ Item {
   Image {
     id: badge
     readonly property bool wanted: !!tile.overview && tile.overview.showIcons && !tile.overview.grouped && !!tile.info && tile.info.icon !== ""
+      && !tile.zooms && !tile.stays
     readonly property real size: Math.round(Math.max(26, Math.min(44, frame.width * 0.11)))
     readonly property real restSize: tile.info ? Math.round(Math.max(26, Math.min(44, tile.info.to.w * 0.11))) : size
     source: wanted ? tile.info.icon : ""
@@ -376,7 +555,7 @@ Item {
   Glass {
     id: titlePill
     readonly property string titles: tile.overview ? tile.overview.windowTitles : "hover"
-    readonly property bool wanted: !!tile.info && tile.title !== "" && !tile.dragging && !tile.dropping
+    readonly property bool wanted: !!tile.info && tile.title !== "" && !tile.dragging && !tile.dropping && !tile.zooms && !tile.stays
       && ((titles === "always" && !tile.overview.grouped) || (titles !== "never" && tile.active))
     anchors.horizontalCenter: frame.horizontalCenter
     anchors.top: frame.bottom
@@ -388,7 +567,8 @@ Item {
     backdrop: tile.overview ? tile.overview.glassBackdrop : null
     backdropIsWindow: true
     opacity: wanted ? tile.smooth(0.7, 1, tile.p) : 0
-    visible: opacity > 0.01
+    // Not even fading out, in a thumbnail opening into the screen.
+    visible: opacity > 0.01 && !tile.zooms
     Behavior on opacity { NumberAnimation { duration: 150 } }
 
     Text {
@@ -409,7 +589,7 @@ Item {
   MouseArea {
     id: mouse
     anchors.fill: frame
-    enabled: !!tile.service && tile.service.interactive && !tile.dropping && !tile.leaving && !tile.peek
+    enabled: !!tile.service && tile.service.interactive && !tile.dropping && !tile.leaving && !tile.peek && !tile.stays
     hoverEnabled: true
     acceptedButtons: Qt.LeftButton | Qt.MiddleButton
     cursorShape: tile.dragging ? Qt.ClosedHandCursor : Qt.PointingHandCursor

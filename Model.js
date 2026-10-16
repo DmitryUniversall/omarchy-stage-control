@@ -139,15 +139,176 @@ function surfaces(layers, monitor) {
 // Border, title bar (hyprbars, from the Title Bars plugin) and corner rounding,
 // from the getoption answers in the same batch. Missing options count as 0.
 function decorFrom(parts) {
-  var decor = { border: 0, bar: 0, rounding: 0 }
+  var decor = { border: 0, bar: 0, rounding: 0, active: null, inactive: null }
   ;(parts || []).forEach(function(part) {
     if (!part || typeof part !== "object" || Array.isArray(part)) return
     var value = Math.max(0, Math.min(200, int(part.int, 0)))
     if (part.option === "general:border_size") decor.border = value
     else if (part.option === "plugin:hyprbars:bar_height") decor.bar = value
     else if (part.option === "decoration:rounding") decor.rounding = value
+    else if (part.option === "general:col.active_border") decor.active = borderGradient(part.gradient)
+    else if (part.option === "general:col.inactive_border") decor.inactive = borderGradient(part.gradient)
   })
   return decor
+}
+
+// A border's colors as Hyprland gives them ("66ffffff 22ffffff 90deg":
+// AARRGGBB colors, then the angle) as { colors: ["#66ffffff", ...], angle }:
+// colors as QML takes them, and the angle in degrees. Null when it isn't one.
+var gradientColorRe = /^(?:0x)?([0-9a-fA-F]{8})$/
+var gradientAngleRe = /^(-?[0-9]+(?:\.[0-9]+)?)deg$/
+function borderGradient(text) {
+  if (typeof text !== "string" || text.length > 400) return null
+  var colors = [], angle = 0
+  text.trim().split(/\s+/).forEach(function(token) {
+    var color = gradientColorRe.exec(token)
+    var turn = gradientAngleRe.exec(token)
+    if (color && colors.length < 10) colors.push("#" + color[1].toLowerCase())
+    else if (turn) angle = Number(turn[1])
+  })
+  return colors.length ? { colors: colors, angle: angle } : null
+}
+
+// What window rules give each window of its looks, beyond the decoration
+// settings (looksFrom): Omarchy's rules give most windows an opacity of
+// 0.985 active and 0.96 inactive, browsers 1 and 0.985. Read with
+// `hyprctl getprop`, a batch of them per read (Service.readWindowLooks).
+var WINDOW_PROPS = [
+  "opacity", "opacity_override", "opacity_inactive", "opacity_inactive_override",
+  "opacity_fullscreen", "opacity_fullscreen_override", "rounding", "rounding_power", "border_size",
+  "no_shadow", "decorate"
+]
+
+// The getprop batch for `addresses`: WINDOW_PROPS of each, in order.
+function windowPropsBatch(addresses) {
+  var commands = []
+  ;(addresses || []).forEach(function(address) {
+    if (!isAddress(address)) return
+    WINDOW_PROPS.forEach(function(prop) { commands.push("getprop address:" + address + " " + prop) })
+  })
+  return commands.join(";")
+}
+
+// The batch's answers ({ "<prop>": value } each, in the order asked) as
+// { address: { opacity, opacityOverride, ..., decorate } }. A prop Hyprland
+// didn't answer (an older Hyprland, a window gone) is skipped, not shifted
+// onto the next.
+function windowLooksFrom(parts, addresses) {
+  var asked = []
+  ;(addresses || []).forEach(function(address) {
+    if (!isAddress(address)) return
+    WINDOW_PROPS.forEach(function(prop) { asked.push({ address: address, prop: prop }) })
+  })
+  var found = {}
+  var at = 0
+  ;(parts || []).forEach(function(part) {
+    if (!part || typeof part !== "object" || Array.isArray(part)) return
+    var keys = Object.keys(part)
+    if (keys.length !== 1) return
+    while (at < asked.length && asked[at].prop !== keys[0]) at++
+    if (at >= asked.length) return
+    var entry = found[asked[at].address] || (found[asked[at].address] = {})
+    entry[asked[at].prop] = part[keys[0]]
+    at++
+  })
+  function number(raw, key, min, max, fallback) {
+    var value = Number(raw[key])
+    return raw[key] !== undefined && raw[key] !== null && isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback
+  }
+  var out = {}
+  for (var address in found) {
+    var raw = found[address]
+    var num = function(key, min, max, fallback) { return number(raw, key, min, max, fallback) }
+    out[address] = {
+      opacity: num("opacity", 0, 1, 1), opacityOverride: raw.opacity_override === true,
+      opacityInactive: num("opacity_inactive", 0, 1, 1), opacityInactiveOverride: raw.opacity_inactive_override === true,
+      opacityFullscreen: num("opacity_fullscreen", 0, 1, 1), opacityFullscreenOverride: raw.opacity_fullscreen_override === true,
+      rounding: raw.rounding === undefined ? null : num("rounding", 0, 1000, 0),
+      roundingPower: raw.rounding_power === undefined ? null : num("rounding_power", 1, 10, 2),
+      border: raw.border_size === undefined ? null : num("border_size", 0, 200, 0),
+      shadow: raw.no_shadow !== true,
+      decorate: raw.decorate !== false
+    }
+  }
+  return out
+}
+
+// A window's opacity as Hyprland draws it (CWindow::updateDecorationValues):
+// its rule's times the setting's, unless the rule overrides it. `state` is
+// "active", "inactive" or "fullscreen"; `window` from windowLooksFrom (or
+// null: no rule), `looks` from looksFrom.
+function windowAlpha(window, looks, state) {
+  var base = looks ? looks.opacity[state] : 1
+  if (!window) return base
+  var rule = state === "active" ? window.opacity : state === "inactive" ? window.opacityInactive : window.opacityFullscreen
+  var override = state === "active" ? window.opacityOverride : state === "inactive" ? window.opacityInactiveOverride : window.opacityFullscreenOverride
+  return override ? rule : rule * base
+}
+
+// What Hyprland draws of a window besides its pixels and its border
+// (decorFrom): the blur behind it, its shadow and its opacity, for the
+// stage to draw the same where the windows come to rest (HyprBlur,
+// WindowTile). Read with each registration (Service.looksRun), with these
+// options; Hyprland's defaults where one is missing.
+var LOOK_OPTIONS = [
+  "decoration:blur:enabled", "decoration:blur:size", "decoration:blur:passes", "decoration:blur:contrast",
+  "decoration:blur:brightness", "decoration:blur:vibrancy", "decoration:blur:vibrancy_darkness",
+  "decoration:blur:noise", "decoration:blur:ignore_opacity",
+  "decoration:shadow:enabled", "decoration:shadow:range", "decoration:shadow:render_power",
+  "decoration:shadow:color", "decoration:shadow:color_inactive", "decoration:shadow:offset",
+  "decoration:shadow:scale", "decoration:shadow:sharp",
+  "decoration:active_opacity", "decoration:inactive_opacity", "decoration:fullscreen_opacity",
+  "decoration:rounding_power"
+]
+
+function looksFrom(parts) {
+  var looks = {
+    blur: { enabled: true, size: 8, passes: 1, contrast: 0.8916, brightness: 0.8172, vibrancy: 0.1696,
+            vibrancyDarkness: 0, noise: 0.0117, ignoreOpacity: true },
+    shadow: { enabled: true, range: 4, renderPower: 3, color: "#ee1a1a1a", colorInactive: null,
+              offset: { x: 0, y: 0 }, scale: 1, sharp: false },
+    opacity: { active: 1, inactive: 1, fullscreen: 1 },
+    roundingPower: 2
+  }
+  ;(parts || []).forEach(function(part) {
+    if (!part || typeof part !== "object" || Array.isArray(part) || typeof part.option !== "string") return
+    var raw = part.float !== undefined ? part.float : part.int
+    function number(min, max, fallback) {
+      var value = Number(raw)
+      return raw !== undefined && raw !== null && isFinite(value) ? Math.max(min, Math.min(max, value)) : fallback
+    }
+    var on = part.bool !== undefined ? part.bool === true : part.int !== undefined ? Number(part.int) !== 0 : null
+    var color = borderGradient(part.gradient)
+    var blur = looks.blur, shadow = looks.shadow, opacity = looks.opacity
+    switch (part.option) {
+    case "decoration:blur:enabled": if (on !== null) blur.enabled = on; break
+    case "decoration:blur:size": blur.size = number(0, 100, blur.size); break
+    case "decoration:blur:passes": blur.passes = Math.round(number(1, 8, blur.passes)); break
+    case "decoration:blur:contrast": blur.contrast = number(0, 2, blur.contrast); break
+    case "decoration:blur:brightness": blur.brightness = number(0, 2, blur.brightness); break
+    case "decoration:blur:vibrancy": blur.vibrancy = number(0, 1, blur.vibrancy); break
+    case "decoration:blur:vibrancy_darkness": blur.vibrancyDarkness = number(0, 1, blur.vibrancyDarkness); break
+    case "decoration:blur:noise": blur.noise = number(0, 1, blur.noise); break
+    case "decoration:blur:ignore_opacity": if (on !== null) blur.ignoreOpacity = on; break
+    case "decoration:shadow:enabled": if (on !== null) shadow.enabled = on; break
+    case "decoration:shadow:range": shadow.range = Math.round(number(0, 200, shadow.range)); break
+    case "decoration:shadow:render_power": shadow.renderPower = Math.round(number(1, 4, shadow.renderPower)); break
+    case "decoration:shadow:color": if (color) shadow.color = color.colors[0]; break
+    // Unset, Hyprland draws inactive windows' shadows in `color` too.
+    case "decoration:shadow:color_inactive": if (color && part.set !== false) shadow.colorInactive = color.colors[0]; break
+    case "decoration:shadow:offset":
+      var at = pair(part.vec2)
+      shadow.offset = { x: Math.max(-500, Math.min(500, at[0])), y: Math.max(-500, Math.min(500, at[1])) }
+      break
+    case "decoration:shadow:scale": shadow.scale = number(0, 1, shadow.scale); break
+    case "decoration:shadow:sharp": if (on !== null) shadow.sharp = on; break
+    case "decoration:active_opacity": opacity.active = number(0, 1, opacity.active); break
+    case "decoration:inactive_opacity": opacity.inactive = number(0, 1, opacity.inactive); break
+    case "decoration:fullscreen_opacity": opacity.fullscreen = number(0, 1, opacity.fullscreen); break
+    case "decoration:rounding_power": looks.roundingPower = number(1, 10, looks.roundingPower); break
+    }
+  })
+  return looks
 }
 
 // How Hyprland's own desktop swipe is set up (the gestures:workspace_swipe_*
@@ -198,13 +359,15 @@ function activeWindow(snap) {
 }
 
 // Windows visible on a monitor right now, front to back: its active workspace,
-// its open special workspace, and pinned windows.
-function visibleWindows(snap, monitor) {
+// its open special workspace, and pinned windows. With `desktop`, the ones
+// that will be once that desktop is on screen.
+function visibleWindows(snap, monitor, desktop) {
   if (!monitor) return []
+  var shown = desktop === undefined ? monitor.activeWorkspace : desktop
   return snap.windows.filter(function(w) {
     if (w.hidden || w.monitor !== monitor.id) return false
     if (w.pinned) return true
-    if (w.workspace === monitor.activeWorkspace) return true
+    if (w.workspace === shown) return true
     return monitor.specialWorkspace !== 0 && w.workspace === monitor.specialWorkspace
   }).sort(function(a, b) { return a.focus - b.focus })
 }
@@ -433,6 +596,64 @@ function planLua(moves, focus, focusAddress) {
   if (isAddress(focusAddress))
     lines.push("hl.dispatch(hl.dsp.focus({ window = \"address:" + focusAddress + "\" }))")
   return lines.join("\n")
+}
+
+// ---- Hyprland going to another desktop under the stage -------------------------
+// Hyprland animates going to another desktop, and a window's border when
+// it gets the keys. Under the stage nobody sees it, but it can go on after
+// the stage is gone: the stage closed on a desktop still sliding into
+// place, or on a border still turning active. So the stage waits that long
+// before it goes (Service.finishCloseWhenStill).
+
+// How long Hyprland's workspace animation takes, in ms, from `hyprctl -j
+// animations`: "workspaces" as it is, or as it takes it from "global", and
+// workspacesIn and workspacesOut when set on their own (a speed of 1 is
+// 100 ms). 0 when it's off, null when the list can't be read.
+function workspaceAnimationMs(json) {
+  var all = {}
+  ;(Array.isArray(json) ? json : []).forEach(function(group) {
+    ;(Array.isArray(group) ? group : []).forEach(function(a) {
+      if (a && typeof a.name === "string") all[a.name] = a
+    })
+  })
+  if (!all.workspaces || !all.global) return null
+  var longest = 0
+  function take(a) {
+    var speed = Number(a.speed)
+    if (a.enabled && speed > 0 && speed < 1000) longest = Math.max(longest, Math.round(speed * 100))
+  }
+  take(all.workspaces.overridden ? all.workspaces : all.global)
+  ;["workspacesIn", "workspacesOut"].forEach(function(name) {
+    if (all[name] && all[name].overridden) take(all[name])
+  })
+  return longest
+}
+
+// How long Hyprland takes to change a window's border, active to inactive
+// and back: its "border" animation, as it is or as it takes it from
+// "global". 0 when it's off, null when the list can't be read.
+function borderAnimationMs(json) {
+  var all = {}
+  ;(Array.isArray(json) ? json : []).forEach(function(group) {
+    ;(Array.isArray(group) ? group : []).forEach(function(a) {
+      if (a && typeof a.name === "string") all[a.name] = a
+    })
+  })
+  if (!all.border || !all.global) return null
+  var a = all.border.overridden ? all.border : all.global
+  var speed = Number(a.speed)
+  return a.enabled && speed > 0 && speed < 1000 ? Math.round(speed * 100) : 0
+}
+
+// The desktop window `address` is on, when that desktop isn't on screen;
+// else 0.
+function hiddenDesktopOf(snap, address) {
+  if (!snap || !isAddress(address)) return 0
+  var w = null
+  for (var i = 0; i < snap.windows.length; i++) if (snap.windows[i].address === address) w = snap.windows[i]
+  if (!w || w.hidden || w.pinned || w.special) return 0
+  var monitor = monitorById(snap, w.monitor)
+  return monitor && w.workspace !== monitor.activeWorkspace && w.workspace !== monitor.specialWorkspace ? w.workspace : 0
 }
 
 // ---- which app a window belongs to ---------------------------------------------
