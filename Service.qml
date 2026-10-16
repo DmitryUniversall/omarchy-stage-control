@@ -789,15 +789,40 @@ Item {
     tracking = false
     closing = true
     exitAddress = Model.isAddress(options.address) ? options.address : ""
+    // Closing gives the keys back (Overview), and Hyprland hands them to the
+    // window that last had them, going to its desktop if need be. A window
+    // or desktop to go to is asked for once that's done, so Hyprland's
+    // own refocus can't take the stage back to where it was.
     if (exitAddress) {
-      if (!options.noFocus) focusWindow(exitAddress)
+      var address = exitAddress
+      if (!options.noFocus) afterKeysReturn(function() { root.focusWindow(address) })
       animateTo(0)
     } else if (validId(options.desktop)) {
       // Switch first, then zoom into the new desktop's windows.
-      focusDesktop(options.desktop)
-      refresh(function() { root.animateTo(0) })
+      var desktop = options.desktop
+      afterKeysReturn(function() {
+        root.focusDesktop(desktop)
+        root.refresh(function() { root.animateTo(0) })
+      })
     } else {
       animateTo(0, options.velocity || 0)
+    }
+  }
+
+  // `action` a moment after the stage gave the keys back (see close()), if
+  // it's still closing then.
+  property var keysReturnAction: null
+  function afterKeysReturn(action) {
+    keysReturnAction = action
+    keysReturnTimer.restart()
+  }
+  Timer {
+    id: keysReturnTimer
+    interval: 60
+    onTriggered: {
+      var action = root.keysReturnAction
+      root.keysReturnAction = null
+      if (action && root.closing) action()
     }
   }
 
