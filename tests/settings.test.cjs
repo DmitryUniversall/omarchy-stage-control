@@ -78,6 +78,15 @@ let passed = 0;
   passed++;
 }
 
+// How the top bar comes back from a desktop picked in the Spaces bar: one of two.
+{
+  assert.equal(defaults.barReturn, "during");
+  assert.equal(plain(Settings.merge(defaults, { barReturn: "after" }, schema)).barReturn, "after");
+  assert.equal(plain(Settings.merge(defaults, { barReturn: "sideways" }, schema)).barReturn, "during");
+  assert.equal(plain(Settings.merge(defaults, { barReturn: true }, schema)).barReturn, "during");
+  passed++;
+}
+
 // ---- Stage Control's entry, from the bar configuration the shell hands plugins ----------
 {
   const barConfig = {

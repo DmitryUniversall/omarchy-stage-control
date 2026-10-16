@@ -171,6 +171,7 @@ out of the bar, so your settings go with it.
 | `spacesBar` | `auto` | `auto` (names; thumbnails on hover), `expanded` (thumbnails and names), `thumbnails` (thumbnails; a name while pointed at) |
 | `previewsWhileOpening` | `false` | the other desktops' thumbnails fill in during the opening animation rather than after it |
 | `keepBar` | `true` | the stage opens below the top bar instead of covering it |
+| `barReturn` | `during` | with `keepBar` off, how the top bar comes back when you go to a desktop from the Spaces bar: `during` (slides down as the desktop opens), `after` (once it has opened) |
 | `renumberDesktops` | `true` | close the gap when a desktop is removed |
 | `closeButtons` | `true` | a close button on the window under the pointer |
 | `middleClickClose` | `true` | middle-click closes a window |

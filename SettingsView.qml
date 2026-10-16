@@ -552,6 +552,22 @@ Item {
           onClicked: root.set("keepBar", root.settings.keepBar === false)
         }
 
+        SectionLabel { text: "Top bar after going to a desktop" }
+        ButtonGroup {
+          enabled: root.settings.keepBar === false
+          opacity: enabled ? 1 : 0.5
+          options: [{ value: "during", label: "With the desktop" }, { value: "after", label: "Once it's open" }]
+          value: root.settings.barReturn || "during"
+          onChanged: function(v) { root.set("barReturn", v) }
+        }
+        Caption {
+          text: root.settings.keepBar !== false
+            ? "Only while the stage covers the top bar: turn off Keep the top bar."
+            : (root.settings.barReturn === "after"
+              ? "Pick a desktop in the Spaces bar and it opens over the whole screen, then the top bar slides back down."
+              : "Pick a desktop in the Spaces bar and the top bar slides back down as the desktop opens, landing with it.")
+        }
+
         Toggle {
           width: parent.width
           label: "Keep desktops numbered in order"

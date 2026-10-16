@@ -887,6 +887,7 @@ Item {
   function startMode(which, byGesture, forcedClass) {
     stillTimer.stop()
     progressAnim.stop()
+    stopBarDrop()
     animating = false
     closing = false
     exitAddress = ""
@@ -967,6 +968,11 @@ Item {
       return
     }
     tracking = false
+    // Before `closing`, which the overlays follow at once: going to a desktop
+    // from its thumbnail, the top bar may wait for it to open (barDrop).
+    barDropAnim.stop()
+    barDrop = !Model.isAddress(options.address) && validId(options.desktop) && options.zoom === true
+      && barReturnsAfter() ? 0 : 1
     closing = true
     exitAddress = Model.isAddress(options.address) ? options.address : ""
     // Closing gives the keys back (Overview), and Hyprland hands them to the
@@ -1049,10 +1055,49 @@ Item {
     onTriggered: if (root.closing && root.progress <= 0.001) root.finishClose()
   }
   // Meanwhile the pointer already reaches the windows (Overview.mask).
-  readonly property bool holdingStill: stillTimer.running
+  readonly property bool holdingStill: stillTimer.running || barDropAnim.running
+
+  // Going to a desktop picked in the Spaces bar with the stage over the top
+  // bar, the bar can come back once the desktop has opened (the barReturn
+  // setting "after", Overview.barReturn): it slides down as barDrop goes
+  // from 0 to 1, after the stage got there, and the stage waits for it.
+  // 1 when no bar is on its way.
+  property real barDrop: 1
+
+  function barReturnsAfter() {
+    return !!settings && settings.keepBar === false && !settings.reduceMotion && settings.barReturn === "after"
+  }
+
+  NumberAnimation {
+    id: barDropAnim
+    target: root
+    property: "barDrop"
+    from: 0
+    to: 1
+    easing.type: Easing.OutCubic
+    onFinished: if (root.closing && root.progress <= 0.001) root.finishCloseWhenStill()
+  }
+
+  function stopBarDrop() {
+    barDropAnim.stop()
+    barDrop = 1
+  }
+
+  // The stage got where it was closing to: the bar comes down first, if it
+  // comes after, then the stage waits for Hyprland.
+  function closeArrived() {
+    if (barDropAnim.running) return
+    if (barDrop < 1) {
+      barDropAnim.duration = Math.round(240 / speedFactor)
+      barDropAnim.restart()
+    } else {
+      finishCloseWhenStill()
+    }
+  }
 
   function finishClose() {
     stillTimer.stop()
+    stopBarDrop()
     switchedAt = 0
     keysOutAt = 0
     endHandover()
@@ -1075,7 +1120,7 @@ Item {
     property: "progress"
     onFinished: {
       root.animating = false
-      if (root.closing && root.progress <= 0.001) root.finishCloseWhenStill()
+      if (root.closing && root.progress <= 0.001) root.closeArrived()
     }
   }
   // Opening or closing on its own (not following the fingers). A flag rather
@@ -1091,7 +1136,7 @@ Item {
     if (distance < 0.001) {
       animating = false
       progress = target
-      if (closing && target === 0) finishCloseWhenStill()
+      if (closing && target === 0) closeArrived()
       return
     }
     var base = target > progress ? 460 : 380
@@ -1229,6 +1274,7 @@ Item {
 
   function beginTracking(which, direction, intent) {
     progressAnim.stop()
+    stopBarDrop()
     animating = false
     followFrom = 0
     var fresh = !shown

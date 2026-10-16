@@ -84,11 +84,28 @@ PanelWindow {
   // instead, opening holes in what it draws there: a bar that changed in the
   // meantime (the desktop's number after going to another desktop, the
   // clock) changed the moment the stage was gone. The two cross over as the
-  // stage starts to move.
+  // stage starts to move, unless the bar comes back whole (barReturn).
   readonly property vector4d edgeHoles: keepBar || !monitor || !monitor.reserved ? Qt.vector4d(0, 0, 0, 0)
     : Qt.vector4d(monitor.reserved.top / Math.max(1, stageHeight), monitor.reserved.bottom / Math.max(1, stageHeight),
                   monitor.reserved.left / Math.max(1, stageWidth), monitor.reserved.right / Math.max(1, stageWidth))
-  readonly property real edgesOpen: keepBar || reduceMotion ? 0 : 1 - smooth(0, 0.12, p)
+  readonly property real edgesOpen: keepBar || reduceMotion ? 0
+    : barReturn !== "" ? (barLanded ? 1 : 0)
+    : 1 - smooth(0, 0.12, p)
+
+  // Going to a desktop picked in the Spaces bar (closeOnDesktop), the bar
+  // comes back whole, sliding down from the edge: "during" as the desktop
+  // opens, landing as it does, or "after" it has opened (Service.barDrop).
+  // As it lands the real one takes over at once: crossed over while the
+  // bar still moved, two bars showed a few pixels apart, as if the bar
+  // stretched. "" otherwise.
+  readonly property string barReturn: !keepBar && !reduceMotion && !!zoomInto && !!service && service.closing
+    ? (settings.barReturn === "after" ? "after" : "during") : ""
+  // How far the bar is above its place: 1 out of sight, 0 in place.
+  readonly property real barAway: barReturn === "during" ? p
+    : barReturn === "after" ? 1 - service.barDrop
+    : screenGhost.fade
+  readonly property bool barLanded: barReturn === "during" ? p <= 0
+    : barReturn === "after" && service.barDrop >= 1
 
   // The window stays up while the stage is closed: one made afresh for every
   // opening spent about 100 ms on its first frame, so a swipe's stage
@@ -1403,15 +1420,17 @@ PanelWindow {
           id: strip
           required property var modelData
           readonly property bool horizontal: modelData.edge === "top" || modelData.edge === "bottom"
-          readonly property real slide: modelData.size * screenGhost.fade
+          readonly property real slide: modelData.size * win.barAway
           x: modelData.edge === "right" ? win.stageWidth - modelData.size + slide : modelData.edge === "left" ? -slide : 0
           y: modelData.edge === "bottom" ? win.stageHeight - modelData.size + slide : modelData.edge === "top" ? -slide : 0
           width: horizontal ? win.stageWidth : modelData.size
           height: horizontal ? modelData.size : win.stageHeight
           // Over a desktop opening from its thumbnail, as over the windows.
           z: win.zoomInto ? 1900 : 0
-          // At rest the real bar shows instead (edgesOpen).
-          opacity: (1 - screenGhost.fade) * (1 - win.edgesOpen)
+          // At rest the real bar shows instead (edgesOpen); coming back
+          // whole (barReturn), once it has landed.
+          opacity: win.barReturn !== "" ? (win.barLanded ? 0 : 1)
+            : (1 - screenGhost.fade) * (1 - win.edgesOpen)
           visible: opacity > 0.01 && screenGhost.hasContent
 
           // Just this edge of the capture, not a copy of the whole screen.
