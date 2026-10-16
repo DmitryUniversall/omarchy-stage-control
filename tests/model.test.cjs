@@ -283,6 +283,10 @@ function applyPlan(snap, plan) {
     anim("workspacesIn", true, true, 3), anim("workspacesOut", false, true, 0)]]), 300, "a child set on its own");
   assert.equal(Model.workspaceAnimationMs(null), null);
   assert.equal(Model.workspaceAnimationMs([[anim("global", true, true, 10)]]), null, "not Hyprland's list");
+  assert.equal(Model.borderAnimationMs([[anim("global", true, true, 10), anim("border", true, true, 5.39)]]), 539);
+  assert.equal(Model.borderAnimationMs([[anim("global", true, true, 10), anim("border", false, true, 0)]]), 1000, "as it takes it from global");
+  assert.equal(Model.borderAnimationMs([[anim("global", true, false, 10), anim("border", false, true, 0)]]), 0, "off");
+  assert.equal(Model.borderAnimationMs(null), null);
 
   const snap = world([
     client("0xa", "foot", 1, [0, 0], [10, 10]), client("0xb", "foot", 2, [0, 0], [10, 10]),
@@ -303,11 +307,16 @@ function applyPlan(snap, plan) {
     { option: "general:border_size", int: 2, set: true },
     { option: "plugin:hyprbars:bar_height", int: 26, set: true },
     { option: "decoration:rounding", int: 999 },
+    { option: "general:col.active_border", gradient: "66ffffff 0x22FFFFFF 90deg", set: true },
+    { option: "general:col.inactive_border", gradient: "not a color", set: true },
     "no such option",
     [1, 2],
   ]));
-  assert.deepEqual(decor, { border: 2, bar: 26, rounding: 200 }, "values read, clamped, junk ignored");
-  assert.deepEqual(plain(Model.decorFrom([])), { border: 0, bar: 0, rounding: 0 }, "no hyprbars, no title bar");
+  assert.deepEqual(decor, { border: 2, bar: 26, rounding: 200, active: { colors: ["#66ffffff", "#22ffffff"], angle: 90 }, inactive: null },
+    "values read, clamped, junk ignored");
+  assert.deepEqual(plain(Model.borderGradient("603a3a3a -45.5deg")), { colors: ["#603a3a3a"], angle: -45.5 });
+  assert.equal(Model.borderGradient(42), null);
+  assert.deepEqual(plain(Model.decorFrom([])), { border: 0, bar: 0, rounding: 0, active: null, inactive: null }, "no hyprbars, no title bar");
 
   const layers = {
     "eDP-1": { levels: {

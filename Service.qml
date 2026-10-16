@@ -174,9 +174,11 @@ Item {
     animationsRun.start(["/usr/bin/hyprctl", "-j", "animations"])
   }
 
-  // How long Hyprland takes to go to another desktop (finishCloseWhenStill).
-  // Read again with every registration, so after every config reload.
+  // How long Hyprland takes to go to another desktop, and to turn a
+  // window's border active (finishCloseWhenStill). Read again with every
+  // registration, so after every config reload.
   property var workspaceAnimationMs: null
+  property var borderAnimationMs: null
   Run {
     id: animationsRun
     maxBytes: 64 * 1024
@@ -187,6 +189,7 @@ Item {
         try { json = JSON.parse(output) } catch (e) { json = null }
       }
       root.workspaceAnimationMs = Model.workspaceAnimationMs(json)
+      root.borderAnimationMs = Model.borderAnimationMs(json)
     }
   }
 
@@ -284,7 +287,7 @@ Item {
 
   property var snap: null
   property var layers: ({})
-  property var decor: ({ border: 0, bar: 0, rounding: 0 })
+  property var decor: ({ border: 0, bar: 0, rounding: 0, active: null, inactive: null })
   property var swipeConfig: Model.swipeFrom([])
   property int snapVersion: 0
   property var snapWaiters: []
@@ -320,6 +323,7 @@ Item {
     }
     var started = snapRun.start(["/usr/bin/hyprctl", "-j", "--batch",
       "clients; monitors; workspaces; layers; getoption general:border_size; getoption plugin:hyprbars:bar_height; getoption decoration:rounding; "
+      + "getoption general:col.active_border; getoption general:col.inactive_border; "
       + "getoption gestures:workspace_swipe_distance; getoption gestures:workspace_swipe_invert; "
       + "getoption gestures:workspace_swipe_cancel_ratio; getoption gestures:workspace_swipe_min_speed_to_force; "
       + "getoption gestures:workspace_swipe_forever"])
@@ -751,6 +755,14 @@ Item {
   property var readyScreens: ({})
   property int openSerial: 0
   readonly property bool shown: mode !== ""
+  // The stage gives the keys back (Overview.keyboardFocus) as it starts to
+  // close, and as soon as the fingers start to close it: Hyprland turns the
+  // window under it active, border and all, while the stage still covers
+  // it. Closed all the way by the fingers, the keys only came back as the
+  // stage went, and the border turned active in plain sight.
+  readonly property bool keysOut: shown && (closing || (tracking && swipeIntent === "close"))
+  property real keysOutAt: 0
+  onKeysOutChanged: if (keysOut) keysOutAt = Date.now()
   readonly property bool interactive: shown && revealed && !tracking && !closing
   readonly property real speedFactor: settings ? settings.speed / 100 : 1
 
@@ -783,6 +795,7 @@ Item {
   // Shows the overlays for `which`; they capture every window and report
   // ready, then the opening animation starts (or the fingers take over).
   function startMode(which, byGesture, forcedClass) {
+    stillTimer.stop()
     progressAnim.stop()
     animating = false
     closing = false
@@ -915,13 +928,19 @@ Item {
   }
 
   // Closed, but Hyprland may still be sliding to the desktop the stage went
-  // to (goTo). The stage, at rest, shows that desktop as it will be: it
-  // stays on screen until Hyprland is done, so the slide's end doesn't
-  // show after it.
+  // to (goTo), or turning the border of the window that got the keys
+  // active. The stage, at rest, shows the desktop as it will be: it stays
+  // on screen until Hyprland is done, so that doesn't show after it.
   function finishCloseWhenStill() {
-    var animationMs = workspaceAnimationMs === null ? 500 : workspaceAnimationMs
-    var left = switchedAt + animationMs + 40 - Date.now()
-    if (switchedAt > 0 && left > 0 && left <= animationMs + 40) {
+    var slideMs = workspaceAnimationMs === null ? 500 : workspaceAnimationMs
+    var borderMs = borderAnimationMs === null ? 300 : borderAnimationMs
+    var now = Date.now()
+    var until = 0
+    // The window Hyprland goes to gets the keys then too.
+    if (switchedAt > 0) until = switchedAt + Math.max(slideMs, borderMs)
+    if (keysOutAt > 0) until = Math.max(until, keysOutAt + borderMs)
+    var left = until + 40 - now
+    if (left > 0 && left <= Math.max(slideMs, borderMs) + 40) {
       stillTimer.interval = Math.round(left)
       stillTimer.restart()
     } else {
@@ -932,10 +951,13 @@ Item {
     id: stillTimer
     onTriggered: if (root.closing && root.progress <= 0.001) root.finishClose()
   }
+  // Meanwhile the pointer already reaches the windows (Overview.mask).
+  readonly property bool holdingStill: stillTimer.running
 
   function finishClose() {
     stillTimer.stop()
     switchedAt = 0
+    keysOutAt = 0
     endHandover()
     deskOverview = null
     progressAnim.stop()

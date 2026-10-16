@@ -368,7 +368,7 @@ Item {
         return
       }
       if (thumb.info && thumb.info.active) thumb.service.close({})
-      else thumb.service.close({ desktop: thumb.modelData })
+      else thumb.overview.closeOnDesktop(thumb.modelData)
     }
     onCanceled: if (thumb.strip.draggingDesktop === thumb.modelData) thumb.strip.cancelDesktopDrag()
   }

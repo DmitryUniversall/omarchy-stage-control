@@ -89,12 +89,14 @@ PanelWindow {
   }
   implicitWidth: 1
   implicitHeight: 1
-  // Input only where the stage is: the top bar's clicks go to the bar.
+  // Input only where the stage is: the top bar's clicks go to the bar. None
+  // while the closed stage waits for Hyprland (Service.holdingStill).
+  readonly property bool takesInput: showsHere && !(service && service.holdingStill)
   mask: Region {
-    x: win.showsHere ? win.edges.left : 0
-    y: win.showsHere ? win.edges.top : 0
-    width: win.showsHere ? Math.max(0, win.stageWidth - win.edges.left - win.edges.right) : 0
-    height: win.showsHere ? Math.max(0, win.stageHeight - win.edges.top - win.edges.bottom) : 0
+    x: win.takesInput ? win.edges.left : 0
+    y: win.takesInput ? win.edges.top : 0
+    width: win.takesInput ? Math.max(0, win.stageWidth - win.edges.left - win.edges.right) : 0
+    height: win.takesInput ? Math.max(0, win.stageHeight - win.edges.top - win.edges.bottom) : 0
   }
   exclusionMode: ExclusionMode.Ignore
   WlrLayershell.namespace: "marcho78-stage-control"
@@ -103,9 +105,10 @@ PanelWindow {
   // close: Hyprland then gives them to the window under the stage, which
   // turns active again, border and all, while the stage still covers it.
   // Given back only once the stage was gone, the window's border visibly
-  // went from inactive to active just as it showed. Let go for a moment
-  // while the stage goes to another desktop (Service.switchDesktop).
-  WlrLayershell.keyboardFocus: showsHere && !!service && !service.testMode && !service.closing && !service.handingKeys
+  // went from inactive to active just as it showed (Service.keysOut). Let
+  // go for a moment while the stage goes to another desktop
+  // (Service.switchDesktop).
+  WlrLayershell.keyboardFocus: showsHere && !!service && !service.testMode && !service.keysOut && !service.handingKeys
     && monitor.focused ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
   function smooth(edge0, edge1, x) {
@@ -208,6 +211,7 @@ PanelWindow {
     spacesBar.cancelDesktopDrag()
     // Where windows were on the last opening's screen capture: not this one's.
     if (!showsHere) ghostRects = ({})
+    zoomInto = null
     // A new opening starts on its desktop; it doesn't slide there.
     if (!showsHere) endSlide()
     rebuild()
@@ -291,6 +295,11 @@ PanelWindow {
 
     var expose = service.mode === "expose"
     var mission = service.mode === "mission"
+    // Closing on a desktop picked in the Spaces bar, now on screen: its
+    // thumbnail opens into the screen (closeOnDesktop).
+    var zoom = mission && service.closing && !!zoomInto && zoomInto.desktop === monitor.activeWorkspace ? zoomInto : null
+    var focused = Model.activeWindow(snap)
+    activeAddress = focused ? focused.address : ""
     var windows = expose ? Model.appWindows(snap, service.exposeClass) : Model.visibleWindows(snap, monitor)
     var minimized = expose && settings.showMinimized !== false ? Model.minimizedWindows(snap, service.exposeClass) : []
 
@@ -329,6 +338,9 @@ PanelWindow {
         || (monitor.specialWorkspace !== 0 && w.workspace === monitor.specialWorkspace))
       var from = onScreen ? Model.localRect(w, monitor)
         : { x: to.x + to.w * 0.04, y: to.y + to.h * 0.04 + 30, w: to.w * 0.92, h: to.h * 0.92 }
+      // Opening from its desktop's thumbnail: where it is in the thumbnail.
+      var zooms = !!zoom && onScreen
+      if (zooms) to = Layout.inThumbnail(from, width, zoom.rect)
       var app = service.appFor(w.cls)
       var home = Model.monitorById(snap, w.monitor) || monitor
       data[w.address] = {
@@ -337,7 +349,7 @@ PanelWindow {
         // Where the window is on its display, whichever desktop it's on:
         // what shows through it is taken from there (WindowTile).
         place: Model.localRect(w, home),
-        workspace: w.workspace, z: (w.floating ? 200 : 0) + (windows.length - index)
+        workspace: w.workspace, z: (w.floating ? 200 : 0) + (windows.length - index), zoom: zooms
       }
       ids.push(w.address)
       rects[w.address] = to
@@ -401,6 +413,16 @@ PanelWindow {
       if (data[leavingAddress]) continue
       data[leavingAddress] = leavingData[leavingAddress]
       ids.push(leavingAddress)
+    }
+    // As a desktop's thumbnail opens into the screen, the windows of the
+    // desktop left stay where they were on the stage and fade.
+    if (zoom) {
+      for (var fadingAddress in tileData) {
+        var was = tileData[fadingAddress]
+        if (data[fadingAddress] || was.minimized || was.peek || !(was.onScreen || was.zoomFade)) continue
+        data[fadingAddress] = Object.assign({}, was, { from: was.to, onScreen: false, leaving: true, zoomFade: true, zoom: false })
+        ids.push(fadingAddress)
+      }
     }
     // The other desktops' windows wait off the screen's edges, a page
     // apart, laid out as they'd be on the stage, for a swipe to bring in
@@ -890,6 +912,27 @@ PanelWindow {
     stillAt = pointerWatch.hovered ? pointerWatch.point.scenePosition : null
   }
 
+  // ---- going to a desktop from the Spaces bar ------------------------------------------
+  //
+  // Its thumbnail opens into the screen, like an app on a phone: the
+  // desktop's windows start where they are in the thumbnail and grow to
+  // where they are on screen (rebuild(), Layout.inThumbnail), over the
+  // stage, while the windows of the desktop left fade where they are. It
+  // used to fade from one desktop's windows to the other's.
+
+  property var zoomInto: null       // { desktop, rect: the thumbnail, on the stage }
+
+  function closeOnDesktop(id) {
+    var thumb = spacesBar.thumbs[id]
+    zoomInto = thumb && spacesBar.expand > 0.5 ? { desktop: id, rect: thumb.pictureRect() } : null
+    service.close({ desktop: id })
+  }
+
+  // The window that has the keys once the stage is gone: its border is the
+  // active one (WindowTile).
+  property string activeAddress: ""
+  readonly property string focusTarget: service && service.exitAddress ? service.exitAddress : activeAddress
+
   // ---- dragging windows ----------------------------------------------------------------
 
   property string dragAddress: ""
@@ -1009,7 +1052,7 @@ PanelWindow {
     else if (key === Qt.Key_Backtab) cycle(false)
     else if (key >= Qt.Key_1 && key <= Qt.Key_9 && mission) {
       var desktop = desktopIds[key - Qt.Key_1]
-      if (desktop !== undefined) service.close({ desktop: desktop })
+      if (desktop !== undefined) closeOnDesktop(desktop)
     } else event.accepted = false
   }
 

@@ -139,15 +139,34 @@ function surfaces(layers, monitor) {
 // Border, title bar (hyprbars, from the Title Bars plugin) and corner rounding,
 // from the getoption answers in the same batch. Missing options count as 0.
 function decorFrom(parts) {
-  var decor = { border: 0, bar: 0, rounding: 0 }
+  var decor = { border: 0, bar: 0, rounding: 0, active: null, inactive: null }
   ;(parts || []).forEach(function(part) {
     if (!part || typeof part !== "object" || Array.isArray(part)) return
     var value = Math.max(0, Math.min(200, int(part.int, 0)))
     if (part.option === "general:border_size") decor.border = value
     else if (part.option === "plugin:hyprbars:bar_height") decor.bar = value
     else if (part.option === "decoration:rounding") decor.rounding = value
+    else if (part.option === "general:col.active_border") decor.active = borderGradient(part.gradient)
+    else if (part.option === "general:col.inactive_border") decor.inactive = borderGradient(part.gradient)
   })
   return decor
+}
+
+// A border's colors as Hyprland gives them ("66ffffff 22ffffff 90deg":
+// AARRGGBB colors, then the angle) as { colors: ["#66ffffff", ...], angle }:
+// colors as QML takes them, and the angle in degrees. Null when it isn't one.
+var gradientColorRe = /^(?:0x)?([0-9a-fA-F]{8})$/
+var gradientAngleRe = /^(-?[0-9]+(?:\.[0-9]+)?)deg$/
+function borderGradient(text) {
+  if (typeof text !== "string" || text.length > 400) return null
+  var colors = [], angle = 0
+  text.trim().split(/\s+/).forEach(function(token) {
+    var color = gradientColorRe.exec(token)
+    var turn = gradientAngleRe.exec(token)
+    if (color && colors.length < 10) colors.push("#" + color[1].toLowerCase())
+    else if (turn) angle = Number(turn[1])
+  })
+  return colors.length ? { colors: colors, angle: angle } : null
 }
 
 // How Hyprland's own desktop swipe is set up (the gestures:workspace_swipe_*
@@ -436,10 +455,11 @@ function planLua(moves, focus, focusAddress) {
 }
 
 // ---- Hyprland going to another desktop under the stage -------------------------
-// Hyprland animates going to another desktop. Under the stage nobody sees
-// it, but it can go on after the stage is gone: the stage closed on a
-// desktop still sliding into place. So the stage waits that long before it
-// goes (Service.finishCloseWhenStill).
+// Hyprland animates going to another desktop, and a window's border when
+// it gets the keys. Under the stage nobody sees it, but it can go on after
+// the stage is gone: the stage closed on a desktop still sliding into
+// place, or on a border still turning active. So the stage waits that long
+// before it goes (Service.finishCloseWhenStill).
 
 // How long Hyprland's workspace animation takes, in ms, from `hyprctl -j
 // animations`: "workspaces" as it is, or as it takes it from "global", and
@@ -463,6 +483,22 @@ function workspaceAnimationMs(json) {
     if (all[name] && all[name].overridden) take(all[name])
   })
   return longest
+}
+
+// How long Hyprland takes to change a window's border, active to inactive
+// and back: its "border" animation, as it is or as it takes it from
+// "global". 0 when it's off, null when the list can't be read.
+function borderAnimationMs(json) {
+  var all = {}
+  ;(Array.isArray(json) ? json : []).forEach(function(group) {
+    ;(Array.isArray(group) ? group : []).forEach(function(a) {
+      if (a && typeof a.name === "string") all[a.name] = a
+    })
+  })
+  if (!all.border || !all.global) return null
+  var a = all.border.overridden ? all.border : all.global
+  var speed = Number(a.speed)
+  return a.enabled && speed > 0 && speed < 1000 ? Math.round(speed * 100) : 0
 }
 
 // The desktop window `address` is on, when that desktop isn't on screen;

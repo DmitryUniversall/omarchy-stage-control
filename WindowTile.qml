@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Effects
+import QtQuick.Shapes
 import Quickshell
 import Quickshell.Wayland
 import Quickshell.Hyprland
@@ -55,7 +56,10 @@ Item {
 
   // Place in the spread. Animates when the layout changes while open (a
   // window closes, the Spaces bar expands), not while opening or closing.
-  readonly property bool animateLayout: !!service && service.revealed && !service.tracking && p > 0.99
+  // Nor once it's closing: the stage then goes where the windows are, from
+  // where they were (a desktop picked in the Spaces bar opens from its
+  // thumbnail, Overview.closeOnDesktop).
+  readonly property bool animateLayout: !!service && service.revealed && !service.tracking && !service.closing && p > 0.99
   property real tx: info ? info.to.x : 0
   property real ty: info ? info.to.y : 0
   property real tw: info ? info.to.w : 1
@@ -219,7 +223,8 @@ Item {
   width: dropping ? lerp(dropFrom.w, dropTo.w, dropT) : dragging ? tw * dragScale : lerp(from.w, tw, e)
   height: dropping ? lerp(dropFrom.h, dropTo.h, dropT) : dragging ? th * dragScale : lerp(from.h, th, e)
   // Above the Spaces bar (z 1100) while dragged or flying into a desktop.
-  z: dragging || dropping ? 2000 : exiting ? 900 : lit ? 500 : (info ? info.z : 0)
+  // Opening from a desktop's thumbnail, over the Spaces bar it starts in.
+  z: dragging || dropping ? 2000 : info && info.zoom ? 1500 + info.z : exiting ? 900 : lit ? 500 : (info ? info.z : 0)
   opacity: (dropping && dropFades ? 1 - dropT * 0.85 : onScreen ? 1 : smooth(0.15, 0.85, p)) * closeFade
   visible: !!info
 
@@ -280,6 +285,59 @@ Item {
     var s = info ? width / Math.max(1, info.size.w) : 1
     if (!(s < 1)) return 1
     return Math.max(0.2, Math.pow(0.8, Math.floor(Math.log(s) / Math.log(0.8))))
+  }
+
+  // Hyprland's border, where the screen capture has none to give
+  // (decoration): a window of another desktop the stage closes on, the
+  // windows of a desktop opening from its thumbnail. It comes in as the
+  // window lands, as the captured one does, rather than popping up the
+  // moment the stage is gone. The active border for the window that gets
+  // the keys (Overview.focusTarget). A ring, under the window's pane.
+  Shape {
+    id: border
+    readonly property var d: tile.service ? tile.service.decor : null
+    readonly property var gradient: !d ? null
+      : !!tile.overview && tile.overview.focusTarget === tile.modelData ? d.active : d.inactive
+    readonly property var colors: gradient ? gradient.colors : []
+    // The window's size here to its real size.
+    readonly property real s: tile.width / Math.max(1, tile.from.w)
+    readonly property real size: d ? d.border * s : 0
+    readonly property real outer: frame.radius > 0 ? frame.radius + size : 0
+    // Hyprland's angle, turning clockwise from left to right.
+    readonly property real angle: (gradient ? gradient.angle : 0) * Math.PI / 180
+    readonly property real dx: Math.cos(angle) * width / 2
+    readonly property real dy: Math.sin(angle) * height / 2
+    anchors.fill: frame
+    anchors.margins: -size
+    visible: tile.onScreen && !decoration.matches && !tile.dragging && !tile.dropping
+      && colors.length > 0 && size > 0.3 && opacity > 0.01
+    opacity: 1 - tile.smooth(0, 0.3, tile.p)
+    preferredRendererType: Shape.CurveRenderer
+
+    ShapePath {
+      strokeWidth: -1
+      fillRule: ShapePath.OddEvenFill
+      fillGradient: LinearGradient {
+        x1: border.width / 2 - border.dx
+        y1: border.height / 2 - border.dy
+        x2: border.width / 2 + border.dx
+        y2: border.height / 2 + border.dy
+        GradientStop { position: 0; color: border.colors.length ? border.colors[0] : "transparent" }
+        GradientStop { position: 1; color: border.colors.length ? border.colors[border.colors.length - 1] : "transparent" }
+      }
+      PathRectangle {
+        width: border.width
+        height: border.height
+        radius: border.outer
+      }
+      PathRectangle {
+        x: border.size
+        y: border.size
+        width: Math.max(0, border.width - 2 * border.size)
+        height: Math.max(0, border.height - 2 * border.size)
+        radius: frame.radius
+      }
+    }
   }
 
   // Under the window, what Hyprland shows through it where it's

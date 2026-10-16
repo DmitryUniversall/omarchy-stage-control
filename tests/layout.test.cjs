@@ -269,4 +269,13 @@ function spacesBarUpTo20(width, count, aspect) {
   passed++;
 }
 
+// A window as its desktop's thumbnail shows it.
+{
+  assert.deepEqual(plain(Layout.inThumbnail({ x: 100, y: 50, w: 800, h: 600 }, 1000, { x: 10, y: 20, w: 200, h: 125 })),
+    { x: 30, y: 30, w: 160, h: 120 });
+  assert.deepEqual(plain(Layout.inThumbnail({ x: 0, y: 0, w: 1, h: 1 }, 1000, { x: 0, y: 0, w: 100, h: 60 })),
+    { x: 0, y: 0, w: 2, h: 2 }, "never smaller than DesktopThumb draws it");
+  passed++;
+}
+
 console.log(`layout: ${passed} checks passed`);
