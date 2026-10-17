@@ -553,13 +553,21 @@ Item {
         }
 
         SectionLabel { text: "Top bar after going to a desktop" }
-        ButtonGroup {
+        Column {
           enabled: root.settings.keepBar === false
           opacity: enabled ? 1 : 0.5
-          options: [{ value: "inside", label: "Part of the desktop" }, { value: "during", label: "Slides in with it" },
-            { value: "after", label: "Slides in after" }]
-          value: root.settings.barReturn || "inside"
-          onChanged: function(v) { root.set("barReturn", v) }
+          spacing: 8
+          ButtonGroup {
+            options: [{ value: "inside", label: "Part of the desktop" },
+              { value: "inside-static", label: "Part of desktop, no slide" }]
+            value: root.settings.barReturn || "inside"
+            onChanged: function(v) { root.set("barReturn", v) }
+          }
+          ButtonGroup {
+            options: [{ value: "during", label: "Slides in with it" }, { value: "after", label: "Slides in after" }]
+            value: root.settings.barReturn || "inside"
+            onChanged: function(v) { root.set("barReturn", v) }
+          }
         }
         Caption {
           text: root.settings.keepBar !== false
@@ -568,7 +576,9 @@ Item {
               ? "Pick a desktop in the Spaces bar and it opens over the whole screen, then the top bar slides back down."
               : root.settings.barReturn === "during"
                 ? "Pick a desktop in the Spaces bar and the top bar slides back down as the desktop opens, landing with it."
-                : "Pick a desktop in the Spaces bar and the top bar comes out of its thumbnail with it, as part of the desktop, in place once it has opened."
+                : root.settings.barReturn === "inside-static"
+                  ? "The top bar opens as part of the desktop. The desktop thumbnails stay in place without sliding away or fading, until the chosen desktop covers them."
+                  : "Pick a desktop in the Spaces bar and the top bar comes out of its thumbnail with it, as part of the desktop, in place once it has opened."
         }
 
         Toggle {

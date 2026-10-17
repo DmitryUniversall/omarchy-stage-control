@@ -94,20 +94,24 @@ PanelWindow {
 
   // Going to a desktop picked in the Spaces bar (closeOnDesktop), the bar
   // comes back whole: "inside" as part of the desktop, out of its thumbnail
-  // with it (the strips follow zoomCard), "during" sliding down from the
-  // edge as the desktop opens, landing as it does, or "after" it has opened
+  // with it (the strips follow zoomCard), "inside-static" with the other
+  // thumbnails staying in place until the desktop covers them, "during"
+  // sliding down from the edge as the desktop opens, landing as it does,
+  // or "after" it has opened
   // (Service.barDrop). As it lands the real one takes over at once: crossed
   // over while the bar still moved, two bars showed a few pixels apart, as
   // if the bar stretched. "" otherwise.
   readonly property string barReturn: !keepBar && !reduceMotion && !!zoomInto && !!service && service.closing
     ? (settings.barReturn || "inside") : ""
+  readonly property bool barInside: barReturn === "inside" || barReturn === "inside-static"
+  readonly property bool holdSpacesBar: barReturn === "inside-static"
   // Only with the bar in the screen capture and on the desktop opening:
   // a fullscreen window covers it (zoomInto.bar).
   readonly property bool barComes: barReturn !== "" && zoomInto.bar === true
   // How far the bar is above its place: 1 out of sight, 0 in place.
   readonly property real barAway: barReturn === "during" ? p
     : barReturn === "after" ? 1 - service.barDrop
-    : barReturn === "inside" ? 0
+    : barInside ? 0
     : screenGhost.fade
   readonly property bool barLanded: barReturn === "after" ? service.barDrop >= 1
     : barReturn !== "" && p <= 0
@@ -1457,8 +1461,8 @@ PanelWindow {
           readonly property real restH: horizontal ? modelData.size : win.stageHeight
           readonly property real slide: modelData.size * win.barAway
           // Part of the desktop opening from its thumbnail (barReturn
-          // "inside"): its place on the desktop, as the desktop grows.
-          readonly property bool inside: win.barReturn === "inside"
+          // "inside" or "inside-static"): its place as the desktop grows.
+          readonly property bool inside: win.barInside
           readonly property real sx: zoomCard.width / Math.max(1, win.stageWidth)
           readonly property real sy: zoomCard.height / Math.max(1, win.stageHeight)
           x: inside ? zoomCard.x + restX * sx
@@ -1751,7 +1755,9 @@ PanelWindow {
       SpacesBar {
         id: spacesBar
         overview: win
-        visible: win.mission
+        // Once covered, hide it before the real top bar shows through the
+        // desktop's edge holes, even if the stage still waits for Hyprland.
+        visible: win.mission && !(win.holdSpacesBar && win.p <= 0)
         z: 1100
       }
 
