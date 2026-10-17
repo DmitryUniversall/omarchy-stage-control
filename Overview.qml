@@ -128,8 +128,13 @@ PanelWindow {
   implicitWidth: 1
   implicitHeight: 1
   // Input only where the stage is: the top bar's clicks go to the bar. None
-  // while the closed stage waits for Hyprland (Service.holdingStill).
-  readonly property bool takesInput: showsHere && !(service && service.holdingStill)
+  // once it gives the keys back (Service.keysOut: closing, or the fingers
+  // closing it), nor while the closed stage waits for Hyprland
+  // (Service.holdingStill). Under the pointer as it gave the keys back, the
+  // stage had Hyprland give them to the window that last had them wherever
+  // it was: one moved to another desktop on the stage took Hyprland there,
+  // whichever desktop the stage closed on.
+  readonly property bool takesInput: showsHere && !(service && (service.keysOut || service.holdingStill))
   mask: Region {
     x: win.takesInput ? win.edges.left : 0
     y: win.takesInput ? win.edges.top : 0
@@ -384,7 +389,10 @@ PanelWindow {
       var from = onScreen ? Model.localRect(w, monitor)
         : { x: to.x + to.w * 0.04, y: to.y + to.h * 0.04 + 30, w: to.w * 0.92, h: to.h * 0.92 }
       // Opening from its desktop's thumbnail: where it is in the thumbnail.
-      var zooms = !!zoom && onScreen
+      // The desktop on screen opens from its thumbnail with its windows
+      // going back to their places from the stage, over it (overCard): in
+      // the thumbnail, they'd have jumped there at the click.
+      var zooms = !!zoom && onScreen && !zoom.here
       if (zooms) to = Layout.inThumbnail(from, width, zoom.rect)
       var app = service.appFor(w.cls)
       var home = Model.monitorById(snap, w.monitor) || monitor
@@ -395,6 +403,7 @@ PanelWindow {
         // what shows through it is taken from there (WindowTile).
         place: Model.localRect(w, home),
         workspace: w.workspace, z: (w.floating ? 200 : 0) + (windows.length - index), zoom: zooms,
+        overCard: !!zoom && zoom.here === true && onScreen,
         fullscreen: w.fullscreen
       }
       ids.push(w.address)
@@ -526,9 +535,9 @@ PanelWindow {
       }
     }
 
-    // Going to a desktop, its windows aren't laid out on the stage: no app
-    // names under them.
-    setModel("groups", zoom ? [] : result.groups.map(function(group) {
+    // Going to another desktop, its windows aren't laid out on the stage: no
+    // app names under them. The desktop on screen's still are, as they leave.
+    setModel("groups", zoom && !zoom.here ? [] : result.groups.map(function(group) {
       var app = service.appFor(group.key)
       return { key: group.key, x: group.x, y: group.y, w: group.w, h: group.h, icon: app.icon, name: app.name }
     }))
@@ -1017,11 +1026,18 @@ PanelWindow {
   function closeOnDesktop(id) {
     var thumb = spacesBar.thumbs[id]
     var rect = !thumb ? null : spacesBar.expand > 0.5 ? thumb.pictureRect() : thumb.nameRect(stageWidth / Math.max(1, stageHeight))
+    // The desktop on screen opens from its thumbnail too, its windows going
+    // back to their places over it from the stage (rebuild()).
+    var here = !!monitor && id === monitor.activeWorkspace
+    if (!rect && here) {
+      service.close({})
+      return
+    }
     // The bar comes back with it (barReturn) if it was in the screen capture
     // (this desktop's) and shows on the desktop opening.
-    zoomInto = rect ? { desktop: id, rect: rect, fromName: spacesBar.expand <= 0.5,
+    zoomInto = rect ? { desktop: id, rect: rect, fromName: spacesBar.expand <= 0.5, here: here,
       bar: barOn(id) && (!monitor || barOn(monitor.activeWorkspace)) } : null
-    service.close({ desktop: id, zoom: !!zoomInto })
+    service.close({ desktop: id, zoom: !!zoomInto, here: here })
     if (zoomInto) rebuild()
   }
 
@@ -1551,7 +1567,20 @@ PanelWindow {
           spacing: 8
           x: modelData.x + (modelData.w - width) / 2
           y: modelData.y + modelData.h + 12
-          opacity: win.smooth(0.6, 1, win.p)
+          // A window of this app pointed at or picked shows its title under
+          // it (WindowTile.titlePill), where this label is: the label gives
+          // way, fading as the title comes.
+          readonly property bool titled: {
+            var shown = false
+            ;[win.hoverAddress, win.selectedAddress].forEach(function(address) {
+              var tile = address ? win.tileFor(address) : null
+              if (tile && tile.titleShown && tile.info && tile.info.cls === modelData.key) shown = true
+            })
+            return shown
+          }
+          property real giveWay: titled ? 1 : 0
+          Behavior on giveWay { NumberAnimation { duration: 150 } }
+          opacity: win.smooth(0.6, 1, win.p) * (1 - giveWay)
           visible: opacity > 0.01
 
           IconImage {

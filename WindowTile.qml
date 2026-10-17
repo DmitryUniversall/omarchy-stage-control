@@ -262,7 +262,9 @@ Item {
   height: atRest ? restHeight / dpr : dropping ? lerp(dropFrom.h, dropTo.h, dropT) : dragging ? th * dragScale : lerp(from.h, th, e)
   // Above the Spaces bar (z 1100) while dragged or flying into a desktop.
   // Opening from a desktop's thumbnail, over the Spaces bar it starts in.
-  z: dragging || dropping ? 2000 : info && info.zoom ? 1500 + info.z : exiting ? 900 : lit ? 500 : (info ? info.z : 0)
+  // Going back to its place over the desktop on screen opening from its
+  // thumbnail (info.overCard), above it too.
+  z: dragging || dropping ? 2000 : info && (info.zoom || info.overCard) ? 1500 + info.z : exiting ? 900 : lit ? 500 : (info ? info.z : 0)
   opacity: (dropping && dropFades ? 1 - dropT * 0.85 : onScreen ? 1 : smooth(0.15, 0.85, p)) * closeFade
     * (zooms && overview ? overview.zoomShown : 1) * (stays ? 1 - smooth(0.05, 0.45, e) : 1)
   visible: !!info
@@ -548,6 +550,10 @@ Item {
     visible: opacity > 0.01
     asynchronous: true
   }
+
+  // Its title shows (titlePill): its app's label under the group gives way
+  // (Overview), the two would sit on top of each other.
+  readonly property bool titleShown: titlePill.wanted
 
   // Window title, under the window. Grouped by app, windows sit too close for
   // a title under each, and the group's label names the app, so titles show

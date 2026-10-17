@@ -993,9 +993,10 @@ Item {
       animateTo(0)
     } else if (validId(options.desktop) && options.zoom === true) {
       // The stage opens the desktop from its thumbnail at once, from what it
-      // knows of it (Overview.closeOnDesktop); Hyprland goes there under it.
+      // knows of it (Overview.closeOnDesktop); Hyprland goes there under it,
+      // unless it's the desktop on screen already (`here`).
       var zoomDesktop = options.desktop
-      afterKeysReturn(function() { root.goTo(zoomDesktop, "") })
+      if (options.here !== true) afterKeysReturn(function() { root.goTo(zoomDesktop, "") })
       animateTo(0)
     } else if (validId(options.desktop)) {
       // Switch first, then zoom into the new desktop's windows.

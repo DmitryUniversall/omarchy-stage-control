@@ -377,8 +377,8 @@ Item {
         thumb.strip.endDesktopDrag()
         return
       }
-      if (thumb.info && thumb.info.active) thumb.service.close({})
-      else thumb.overview.closeOnDesktop(thumb.modelData)
+      // The desktop on screen opens from its thumbnail too (closeOnDesktop).
+      thumb.overview.closeOnDesktop(thumb.modelData)
     }
     onCanceled: if (thumb.strip.draggingDesktop === thumb.modelData) thumb.strip.cancelDesktopDrag()
   }
