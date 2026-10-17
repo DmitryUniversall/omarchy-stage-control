@@ -81,7 +81,7 @@ var SCHEMA = {
     windowTitles: ["hover", "always", "never"],
     windowHighlight: ["always", "moved", "never"],
     spacesBar: ["auto", "expanded", "thumbnails"],
-    barReturn: ["inside", "during", "after"],
+    barReturn: ["inside", "inside-static", "during", "after"],
     background: ["blur", "dim"],
     glass: ["liquid", "frosted", "solid", "theme"],
     highlight: ["accent", "blue", "purple", "pink", "red", "orange", "yellow", "green", "graphite"]

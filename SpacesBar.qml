@@ -19,7 +19,9 @@ Item {
   readonly property var monitor: overview ? overview.monitor : null
   readonly property var settings: service && service.settings ? service.settings : ({})
   readonly property real p: service ? service.progress : 0
-  readonly property real e: settings.reduceMotion ? 1 : p
+  // With the stationary variant, the chosen desktop grows over the bar;
+  // the thumbnails neither slide away nor fade while it opens.
+  readonly property real e: settings.reduceMotion || (overview && overview.holdSpacesBar) ? 1 : p
   readonly property int count: overview ? overview.desktopIds.length : 0
 
   // "auto" (names, thumbnails on hover), "expanded" (thumbnails and names)
