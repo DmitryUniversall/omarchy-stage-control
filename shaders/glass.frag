@@ -62,6 +62,20 @@ void main() {
         return;
     }
 
+    // Away from the rim there is neither refraction nor a highlight, so
+    // all three color samples coincide and the edge normal is unused.
+    // Window backdrops use bevel 0.001 and rim 0: almost their entire area
+    // takes this path as the desktop grows, without changing the edge shader.
+    float edge = 1.0 - clamp(-d / max(bevel, 0.001), 0.0, 1.0);
+    if (coverage == 1.0 && edge == 0.0 && (rim == 0.0 || d <= -1.4)) {
+        vec3 color = textureLod(backdrop, backdropUv(qt_TexCoord0), frost).rgb;
+        color = mix(color, tint.rgb, tint.a);
+        color = mix(color, fill.rgb, fill.a);
+        color *= 1.0 - 0.05 * qt_TexCoord0.y;
+        fragColor = vec4(color, 1.0) * coverage * qt_Opacity;
+        return;
+    }
+
     // Outward normal of the rounded rect.
     vec2 e = vec2(0.5, 0.0);
     vec2 n = vec2(roundBox(p + e.xy, half_size, r) - roundBox(p - e.xy, half_size, r),
@@ -70,7 +84,6 @@ void main() {
     n = len > 1e-4 ? n / len : vec2(0.0);
 
     // 1 at the rim, 0 once `bevel` pixels in.
-    float edge = 1.0 - clamp(-d / max(bevel, 0.001), 0.0, 1.0);
     float bend = edge * edge * edge;
 
     // The rim pulls its samples inward: what's under the pane looks magnified
