@@ -27,9 +27,12 @@ Close windows, or swipe down for just the current app's windows.
   `workspace_swipe_min_speed_to_force`). Any other switch while the stage is
   open (Ctrl+←/→, Super+3, the top bar) slides there too.
 * **Organize desktops.** Drag a window onto a desktop to move it there, or onto
-  **+** for a new desktop. Drag desktops to reorder them. Hover one and click
-  **×** to remove it; its windows move to the desktop before it (after it, for
-  the first one). Right-click one to rename it.
+  **+** for a new desktop. A window that gets a desktop to itself takes its
+  full size on the way, so it's already drawn at that size there (Hyprland
+  holds windows on hidden desktops at their old picture until they show).
+  Drag desktops to reorder them. Hover one and click **×** to remove it; its
+  windows move to the desktop before it (after it, for the first one).
+  Right-click one to rename it.
 * **Close windows.** Hover a window and click its **×**, middle-click it, or
   pick it and press Ctrl+W.
 * **App Exposé.** Swipe down to see every window of the app you're using, on
@@ -233,7 +236,7 @@ through a shell or `PATH`:
 
 | Program | Why |
 |---|---|
-| `/usr/bin/hyprctl` | read windows, desktops, displays and bindings, and how Hyprland draws windows (`getoption` for blur, shadows and opacity; `getprop` for each window's rules; `animations`); register Stage Control's gesture and shortcuts; move windows between desktops; bring the settings window forward |
+| `/usr/bin/hyprctl` | read windows, desktops, displays and bindings, and how Hyprland draws windows (`getoption` for blur, shadows and opacity; `getprop` for each window's rules; `animations`); register Stage Control's gesture and shortcuts; move windows between desktops (one getting a desktop to itself is maximized for a moment first, under the stage); bring the settings window forward |
 | `/usr/bin/readlink` | find the wallpaper Omarchy is showing (`-f` on `~/.local/state/omarchy/current/background`) |
 | `/usr/bin/omarchy` | only for hot corners you assign: `menu toggle`, `menu toggle apps`, `system lock`, `launch screensaver` |
 

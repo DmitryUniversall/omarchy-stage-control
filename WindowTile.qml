@@ -129,10 +129,13 @@ Item {
     onFinished: if (!tile.dropFades || tile.peek) tile.endDrop()
   }
 
-  function flyTo(rect, fade) {
+  // Fitted into `rect` as it is, or, `exact`, onto it: a window taking its
+  // new desktop's size on the way takes that shape (Overview.presizedRect).
+  function flyTo(rect, fade, exact) {
     dropFrom = { x: x, y: y, w: width, h: height }
     var scale = Math.min(rect.w / Math.max(1, width), rect.h / Math.max(1, height))
-    var w = width * scale, h = height * scale
+    var w = exact === true ? rect.w : width * scale
+    var h = exact === true ? rect.h : height * scale
     dropTo = { x: rect.x + (rect.w - w) / 2, y: rect.y + (rect.h - h) / 2, w: w, h: h }
     dropFades = fade === true
     dropping = true

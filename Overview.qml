@@ -132,8 +132,9 @@ PanelWindow {
   implicitWidth: 1
   implicitHeight: 1
   // Input only where the stage is: the top bar's clicks go to the bar. None
-  // once it gives the keys back (Service.keysOut: closing, or the fingers
-  // closing it), nor while the closed stage waits for Hyprland
+  // once it starts to give the keys back (Service.keysOut: closing, or the
+  // fingers closing it; they go a few frames later, Service.keysGone), nor
+  // while the closed stage waits for Hyprland
   // (Service.holdingStill). Under the pointer as it gave the keys back, the
   // stage had Hyprland give them to the window that last had them wherever
   // it was: one moved to another desktop on the stage took Hyprland there,
@@ -152,10 +153,11 @@ PanelWindow {
   // close: Hyprland then gives them to the window under the stage, which
   // turns active again, border and all, while the stage still covers it.
   // Given back only once the stage was gone, the window's border visibly
-  // went from inactive to active just as it showed (Service.keysOut). Let
-  // go for a moment while the stage goes to another desktop
-  // (Service.switchDesktop).
-  WlrLayershell.keyboardFocus: showsHere && !!service && !service.testMode && !service.keysOut && !service.handingKeys
+  // went from inactive to active just as it showed (Service.keysOut; the
+  // keys go a few frames after the pointer stops reaching the stage,
+  // Service.keysGone). Let go for a moment while the stage goes to another
+  // desktop (Service.switchDesktop).
+  WlrLayershell.keyboardFocus: showsHere && !!service && !service.testMode && !service.keysGone && !service.handingKeys
     && monitor.focused ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
 
   function smooth(edge0, edge1, x) {
@@ -1194,13 +1196,30 @@ PanelWindow {
     var moves = !!target && !(target.kind === "desktop" && target.id === monitor.activeWorkspace)
     // Start the flight from where the window was let go, before the drag
     // state (which positions it) is cleared.
-    if (tile && moves && rect) tile.flyTo(rect, true)
+    var into = tile && moves && rect ? presizedRect(address, target, rect) : null
+    if (into) tile.flyTo(into, true, true)
+    else if (tile && moves && rect) tile.flyTo(rect, true)
     else if (tile && info) tile.flyTo(info.to, false)
     dragAddress = ""
     dropTarget = null
     if (!moves) return
     if (target.kind === "desktop") service.moveWindowToDesktop(address, target.id, screenName)
     else service.moveWindowToNewDesktop(address, screenName)
+  }
+
+  // A window going to a desktop of its own takes that size on the way
+  // (Service.presize): it flies into its place in that desktop's thumbnail,
+  // the shape it has there, or, for a new desktop, into the + in that shape.
+  // Null for one that keeps its size.
+  function presizedRect(address, target, rect) {
+    var shape = Model.presizeRect(snap, address, monitor, target.kind === "desktop" ? target.id : 0)
+    if (!shape) return null
+    if (target.kind === "desktop") {
+      var s = rect.w / Math.max(1, monitor.w)
+      return { x: rect.x + shape.x * s, y: rect.y + shape.y * s, w: shape.w * s, h: shape.h * s }
+    }
+    var fit = Math.min(rect.w / shape.w, rect.h / shape.h)
+    return { x: rect.x + (rect.w - shape.w * fit) / 2, y: rect.y + (rect.h - shape.h * fit) / 2, w: shape.w * fit, h: shape.h * fit }
   }
 
   function cancelDrag() {

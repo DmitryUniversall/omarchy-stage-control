@@ -108,6 +108,8 @@ function snapshot(clients, monitors, workspaces) {
       fullscreen: int(c.fullscreen, 0),
       pinned: c.pinned === true,
       hidden: c.hidden === true,
+      // In a tab group with other windows.
+      grouped: Array.isArray(c.grouped) && c.grouped.length > 1,
       focus: int(c.focusHistoryID, 9999),
       xwayland: c.xwayland === true
     }
@@ -580,9 +582,66 @@ function reorderPlan(snap, monitorName, pinnedByMonitor, fromId, toId) {
   return { ok: true, moves: moves, focus: focus, carry: destinationOf }
 }
 
+// ---- a window taking its new desktop's size first ------------------------------
+// Hyprland gives a window moved to a desktop that isn't on screen its new
+// size at once, but holds it there (xdg-shell's "suspended"): it draws
+// nothing new until that desktop shows. It kept the picture it had, the
+// Spaces bar and the opening desktop showed that, stretched, and the window
+// drew itself at its new size only once there, in view. So a window going
+// to a desktop of its own takes that size first, where it is, under the
+// stage: maximized, which is the size Hyprland gives a window alone on a
+// desktop. It draws itself, and goes (presized, planLua) the size it is
+// there. Service.moveWindowToDesktop.
+
+// Where window `address` will be alone on a desktop of its own (on its
+// display, as localRect), if it should take that size first; else null.
+// `desktop` is where it goes, 0 for a new desktop. Only a tiled window of
+// the desktop on screen sharing it with others (alone it has that size
+// already), going to an empty desktop on the same display: on one with
+// windows its size depends on which one Hyprland splits. Not one in a tab
+// group, nor an XWayland one (Hyprland doesn't suspend those), nor while a
+// window there is fullscreen (maximizing would take that away).
+function presizeRect(snap, address, monitor, desktop) {
+  if (!snap || !monitor || !isAddress(address)) return null
+  var win = null
+  for (var i = 0; i < snap.windows.length; i++) if (snap.windows[i].address === address) win = snap.windows[i]
+  if (!win || win.monitor !== monitor.id || win.workspace !== monitor.activeWorkspace) return null
+  if (win.floating || win.fullscreen !== 0 || win.pinned || win.hidden || win.special || win.grouped || win.xwayland) return null
+  if (desktop === win.workspace) return null
+  if (desktop > 0) {
+    if (snap.windows.some(function(w) { return w.workspace === desktop })) return null
+    if (snap.workspaces.some(function(ws) { return ws.id === desktop && ws.monitor !== monitor.name })) return null
+  }
+  var here = snap.windows.filter(function(w) {
+    return w.monitor === monitor.id && w.workspace === win.workspace && !w.hidden && !w.pinned
+  })
+  if (here.some(function(w) { return w.fullscreen !== 0 })) return null
+  // The tiled windows fill the desktop but for its outer gaps: together
+  // they take the room one window alone would.
+  var tiled = here.filter(function(w) { return !w.floating })
+  var left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity
+  tiled.forEach(function(w) {
+    left = Math.min(left, w.x)
+    top = Math.min(top, w.y)
+    right = Math.max(right, w.x + w.w)
+    bottom = Math.max(bottom, w.y + w.h)
+  })
+  if (left === win.x && top === win.y && right === win.x + win.w && bottom === win.y + win.h) return null
+  return localRect({ x: left, y: top, w: right - left, h: bottom - top }, monitor)
+}
+
+// Lua for hyprctl eval that maximizes window `address`, the first step of a
+// presized move.
+function presizeLua(address) {
+  if (!isAddress(address)) return ""
+  return "hl.dispatch(hl.dsp.window.fullscreen({ window = \"address:" + address + "\", mode = \"maximized\", action = \"set\" }))"
+}
+
 // Lua for hyprctl eval that performs moves in order, then focuses a
 // workspace or a window. Every value is validated here; nothing else reaches
-// the code.
+// the code. A presized move (presizeLua) ends the window's maximized state
+// once it's there, alone at the size it already has: Hyprland sends it no
+// new size.
 function planLua(moves, focus, focusAddress) {
   var lines = []
   ;(moves || []).forEach(function(move) {
@@ -590,6 +649,8 @@ function planLua(moves, focus, focusAddress) {
     if (!isAddress(move.address)) return
     if (typeof to !== "number" || !isFinite(to) || Math.round(to) !== to || to <= 0 || to >= 100000) return
     lines.push("hl.dispatch(hl.dsp.window.move({ window = \"address:" + move.address + "\", workspace = \"" + to + "\", follow = false }))")
+    if (move.presized === true)
+      lines.push("hl.dispatch(hl.dsp.window.fullscreen({ window = \"address:" + move.address + "\", mode = \"maximized\", action = \"unset\" }))")
   })
   if (typeof focus === "number" && focus > 0 && focus < 100000 && Math.round(focus) === focus)
     lines.push("hl.dispatch(hl.dsp.focus({ workspace = \"" + focus + "\" }))")

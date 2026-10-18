@@ -410,7 +410,9 @@ Item {
         return false
       }
     }
-    var started = snapRun.start(["/usr/bin/hyprctl", "-j", "--batch",
+    // Not while a window is maximized to take its new desktop's size
+    // (presize): the read that follows its move answers.
+    var started = !presizing && snapRun.start(["/usr/bin/hyprctl", "-j", "--batch",
       "clients; monitors; workspaces; layers; getoption general:border_size; getoption plugin:hyprbars:bar_height; getoption decoration:rounding; "
       + "getoption general:col.active_border; getoption general:col.inactive_border; "
       + "getoption gestures:workspace_swipe_distance; getoption gestures:workspace_swipe_invert; "
@@ -432,6 +434,15 @@ Item {
     onFinished: function(ok, output) {
       var read = root.runningRead
       root.runningRead = 0
+      // A read that may have seen a window maximized to take its new
+      // desktop's size (presize) is dropped; its callers wait for the one
+      // after its move.
+      if (root.presizing) {
+        root.snapPending = true
+        root.laterWaiters = root.snapWaiters.concat(root.laterWaiters)
+        root.snapWaiters = []
+        return
+      }
       var good = false
       if (ok) {
         try {
@@ -703,15 +714,16 @@ Item {
   // windows have moved.
   property var planQueue: []
   // Moves under way or waiting (the Spaces bar holds a reorder until done).
-  readonly property bool plansBusy: planRun.running || planQueue.length > 0
+  // A window taking its new desktop's size first (presize) is one.
+  readonly property bool plansBusy: planRun.running || presizing || planQueue.length > 0
 
   function whenPlansDone(action) {
-    if (planRun.running || planQueue.length > 0) planQueue = planQueue.concat([action])
+    if (plansBusy) planQueue = planQueue.concat([action])
     else action()
   }
 
   function nextPlans() {
-    while (planQueue.length > 0 && !planRun.running) {
+    while (planQueue.length > 0 && !planRun.running && !presizing) {
       var action = planQueue[0]
       planQueue = planQueue.slice(1)
       action()
@@ -757,8 +769,67 @@ Item {
       var ids = root.desktopsFor(monitorName).map(function(d) { return d.id })
       if (ids.indexOf(id) < 0) ids.push(id)
       root.savePinned(root.withPinned(monitorName, ids))
-      root.runPlan([{ address: address, to: id }], 0)
+      var monitor = root.snap ? Model.monitorByName(root.snap, monitorName) : null
+      if (root.shown && !root.keysOut && Model.presizeRect(root.snap, address, monitor, id)) root.presize(address, id)
+      else root.runPlan([{ address: address, to: id }], 0)
     })
+  }
+
+  // A window going to a desktop of its own takes that size first, under the
+  // stage, and goes once it has drawn itself at it (Model.presizeRect): in
+  // the Spaces bar and opening that desktop it's already the size it is
+  // there. It flies into the desktop's thumbnail meanwhile (Overview.endDrag).
+  property string presizeAddress: ""
+  property int presizeDesktop: 0
+  readonly property bool presizing: presizeAddress !== ""
+  // Asked to go before Hyprland maximized it (the stage closing, keysOut):
+  // it goes right after.
+  property bool presizeHurry: false
+
+  function presize(address, id) {
+    presizeAddress = address
+    presizeDesktop = id
+    presizeHurry = false
+    if (!presizeRun.start(["/usr/bin/hyprctl", "eval", Model.presizeLua(address)])) endPresize()
+  }
+
+  Run {
+    id: presizeRun
+    maxBytes: 16 * 1024
+    timeoutMs: 4000
+    onFinished: function(ok) {
+      if (!root.presizing) return
+      if (ok && !root.presizeHurry) presizeTimer.restart()
+      else root.endPresize()
+    }
+  }
+
+  Timer {
+    id: presizeTimer
+    // A terminal draws itself at its new size within a frame or two; a
+    // browser may take a few. Well within the flight into the thumbnail.
+    interval: 150
+    onTriggered: root.endPresize()
+  }
+
+  // It goes, and ends its maximized state there (also if maximizing failed:
+  // then there's none to end). Reads of Hyprland's state wait until then
+  // (refresh()): the window showed maximized on the desktop it was leaving.
+  // Not before the maximizing is through: it would have come after the
+  // move, and the window stayed maximized on its new desktop.
+  function endPresize() {
+    if (!presizing) return
+    presizeTimer.stop()
+    if (presizeRun.running) {
+      presizeHurry = true
+      return
+    }
+    var move = { address: presizeAddress, to: presizeDesktop, presized: true }
+    presizeAddress = ""
+    presizeDesktop = 0
+    presizeHurry = false
+    if (!planRun.start(["/usr/bin/hyprctl", "eval", Model.planLua([move], 0)]))
+      planQueue = [function() { root.runPlan([move], 0) }].concat(planQueue)
   }
 
   function addDesktop(monitorName) {
@@ -851,8 +922,34 @@ Item {
   // it. Closed all the way by the fingers, the keys only came back as the
   // stage went, and the border turned active in plain sight.
   readonly property bool keysOut: shown && (closing || (tracking && swipeIntent === "close"))
+  // The pointer stops reaching the stage at keysOut (Overview.takesInput)
+  // and the keys go a few frames later (keysGone): the two reach Hyprland
+  // in commits of their own, and the keys first, with the stage still
+  // under the pointer, Hyprland gave them to the window that last had them
+  // wherever it was, and went to its desktop (a window just moved to
+  // another one on the stage).
+  property bool keysGone: false
   property real keysOutAt: 0
-  onKeysOutChanged: if (keysOut) keysOutAt = Date.now()
+  onKeysOutChanged: {
+    if (keysOut) {
+      keysGoneTimer.restart()
+      // A window taking its new desktop's size goes now, drawn or not: the
+      // screen coming out from under the stage mustn't show it maximized
+      // where it was.
+      endPresize()
+    } else {
+      keysGoneTimer.stop()
+      keysGone = false
+    }
+  }
+  Timer {
+    id: keysGoneTimer
+    interval: 24
+    onTriggered: {
+      root.keysGone = root.keysOut
+      if (root.keysGone) root.keysOutAt = Date.now()
+    }
+  }
   readonly property bool interactive: shown && revealed && !tracking && !closing
   readonly property real speedFactor: settings ? settings.speed / 100 : 1
 

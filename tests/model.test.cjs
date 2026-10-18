@@ -274,6 +274,51 @@ function applyPlan(snap, plan) {
   passed++;
 }
 
+// ---- a window taking its new desktop's size first ---------------------------------
+{
+  // Two terminals side by side on desktop 1 (on screen), 1280x800 with a 26px bar.
+  const left = [8, 34], right = [646, 34], half = [626, 758];
+  const snap = world([
+    client("0xa", "kitty", 1, left, half),
+    client("0xb", "kitty", 1, right, half),
+    client("0xf", "pavucontrol", 1, [400, 300], [300, 200], { floating: true }),
+    client("0xc", "firefox", 3, [8, 34], [1264, 758]),
+    client("0xx", "steam", 1, left, half, { xwayland: true }),
+    client("0xd", "kitty", 4, [8, 34], [1264, 758]),
+  ], [ws(1, "eDP-1", 4), ws(3), ws(4), ws(6, "DP-1", 0)]);
+  const monitor = snap.monitors[0];
+  assert.deepEqual(plain(Model.presizeRect(snap, "0xb", monitor, 2)), { x: 8, y: 34, w: 1264, h: 758 },
+    "alone on desktop 2 it takes the room both terminals share (floating ones don't count)");
+  assert.deepEqual(plain(Model.presizeRect(snap, "0xb", monitor, 0)), { x: 8, y: 34, w: 1264, h: 758 }, "a new desktop");
+  assert.equal(Model.presizeRect(snap, "0xb", monitor, 3), null, "a desktop with a window: Hyprland splits one");
+  assert.equal(Model.presizeRect(snap, "0xb", monitor, 6), null, "a desktop on another display");
+  assert.equal(Model.presizeRect(snap, "0xb", monitor, 1), null, "where it is already");
+  assert.equal(Model.presizeRect(snap, "0xf", monitor, 2), null, "floating: keeps its size");
+  assert.equal(Model.presizeRect(snap, "0xx", monitor, 2), null, "XWayland: Hyprland doesn't hold it");
+  assert.equal(Model.presizeRect(snap, "0xd", monitor, 2), null, "not on the desktop on screen");
+  assert.equal(Model.presizeRect(snap, "0xnope", monitor, 2), null);
+
+  const alone = world([client("0xa", "kitty", 1, [8, 34], [1264, 758])], [ws(1)]);
+  assert.equal(Model.presizeRect(alone, "0xa", alone.monitors[0], 2), null, "alone: that size already");
+  const full = world([client("0xa", "kitty", 1, left, half), client("0xb", "mpv", 1, [0, 0], [1280, 800], { fullscreen: 2 })], [ws(1)]);
+  assert.equal(Model.presizeRect(full, "0xa", full.monitors[0], 2), null, "maximizing would end another's fullscreen");
+  const tabs = world([client("0xa", "kitty", 1, left, half, { grouped: ["0xa", "0xe"] }), client("0xb", "kitty", 1, right, half)], [ws(1)]);
+  assert.equal(Model.presizeRect(tabs, "0xa", tabs.monitors[0], 2), null, "in a tab group");
+
+  assert.equal(Model.presizeLua("0xb\") os.exit()"), "");
+  const lua = Model.presizeLua("0xb") + "\n" + Model.planLua([{ address: "0xb", to: 2, presized: true }], 0);
+  const out = execFileSync("lua", ["-e", `
+    local log = {}
+    hl = { dispatch = function(d) log[#log + 1] = d end,
+           dsp = { window = { move = function(t) return "move " .. t.window .. " " .. t.workspace .. " " .. tostring(t.follow) end,
+                              fullscreen = function(t) return t.action .. " " .. t.mode .. " " .. t.window end } } }
+    ${lua}
+    print(table.concat(log, "\\n"))`], { encoding: "utf8" });
+  assert.equal(out.trim(), "set maximized address:0xb\nmove address:0xb 2 false\nunset maximized address:0xb",
+    "maximized where it is, then moved and no longer maximized there");
+  passed++;
+}
+
 // ---- how Hyprland draws a window ----------------------------------------------------
 {
   const looks = plain(Model.looksFrom([
