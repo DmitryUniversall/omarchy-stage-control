@@ -316,6 +316,54 @@ function applyPlan(snap, plan) {
     print(table.concat(log, "\\n"))`], { encoding: "utf8" });
   assert.equal(out.trim(), "set maximized address:0xb\nmove address:0xb 2 false\nunset maximized address:0xb",
     "maximized where it is, then moved and no longer maximized there");
+
+  // A desktop with only floating windows tiles it alone.
+  const floaty = world([client("0xa", "kitty", 1, left, half), client("0xb", "kitty", 1, right, half),
+    client("0xg", "pavucontrol", 2, [400, 300], [300, 200], { floating: true })], [ws(1), ws(2)]);
+  assert.deepEqual(plain(Model.presizeRect(floaty, "0xb", floaty.monitors[0], 2)), { x: 8, y: 34, w: 1264, h: 758 });
+  assert.equal(Model.showsFirst(floaty, "0xb", floaty.monitors[0], 2), false);
+  passed++;
+}
+
+// ---- a window going to a desktop with windows: shown for a moment ------------------
+{
+  const half = [626, 758];
+  const snap = world([
+    client("0xa", "kitty", 1, [8, 34], half),
+    client("0xb", "kitty", 1, [646, 34], half),
+    client("0xf", "pavucontrol", 1, [400, 300], [300, 200], { floating: true }),
+    client("0xc", "firefox", 3, [8, 34], [1264, 758]),
+    client("0xe", "kitty", 6, [8, 34], [1264, 758]),
+  ], [ws(1, "eDP-1", 3), ws(3), ws(6, "DP-1")]);
+  const monitor = snap.monitors[0];
+  assert.equal(Model.showsFirst(snap, "0xb", monitor, 3), true, "to a desktop with a window");
+  assert.equal(Model.showsFirst(snap, "0xb", monitor, 2), false, "an empty one: presizeRect");
+  assert.equal(Model.showsFirst(snap, "0xb", monitor, 6), false, "on another display");
+  assert.equal(Model.showsFirst(snap, "0xf", monitor, 3), false, "floating: nothing changes size");
+  assert.equal(Model.showsFirst(snap, "0xb", monitor, 1), false, "where it is");
+  assert.equal(Model.showsFirst(snap, "0xc", monitor, 1), false, "not on the desktop on screen");
+
+  assert.equal(Model.showFirstLua("0xb", 3, 3, 0, 150), "", "to the desktop it's on");
+  assert.equal(Model.showFirstLua("0xb", 3, 1, 0, "150; os.exit()"), "");
+  assert.equal(Model.showFirstLua("0xb\") os.exit()", 3, 1, 0, 150), "");
+  const lua = Model.showFirstLua("0xb", 3, 1, 0, 150);
+  const run = (last) => execFileSync("lua", ["-e", `
+    local log = {}
+    hl = { dispatch = function(d) log[#log + 1] = d end,
+           get_last_workspace = function() return ${last} end,
+           timer = function(f, opts) log[#log + 1] = "timer " .. opts.timeout .. " " .. opts.type; f() end,
+           dsp = { focus = function(t) return "focus " .. t.workspace end,
+                   window = { move = function(t) return "move " .. t.window .. " " .. t.workspace .. " " .. tostring(t.follow) end } } }
+    ${lua}
+    print(table.concat(log, "\\n"))`], { encoding: "utf8" }).trim();
+  assert.equal(run('{ id = 5, visible = false, monitor = { id = 0 } }'),
+    "move address:0xb 3 false\nfocus 3\ntimer 150 oneshot\nfocus 5\nfocus 1",
+    "there and back by way of the desktop before, which stays the one before");
+  assert.equal(run('{ id = 5, visible = true, monitor = { id = 1 } }'), "move address:0xb 3 false\nfocus 3\ntimer 150 oneshot\nfocus 1",
+    "not by way of one on another display");
+  assert.equal(run('{ id = 3, visible = false, monitor = { id = 0 } }'), "move address:0xb 3 false\nfocus 3\ntimer 150 oneshot\nfocus 1",
+    "it came from the desktop it shows: that stays the one before anyway");
+  assert.equal(run("nil"), "move address:0xb 3 false\nfocus 3\ntimer 150 oneshot\nfocus 1");
   passed++;
 }
 
@@ -427,12 +475,15 @@ function applyPlan(snap, plan) {
     "eDP-1": { levels: {
       "0": [{ namespace: "omarchy-background", x: 0, y: 0, w: 1280, h: 800 }],
       "2": [{ namespace: "omarchy-bar", x: 0, y: 0, w: 1280, h: 26 }, { namespace: "omarchy-dock", x: 0, y: 688, w: 1280, h: 112 }],
-      "3": [{ namespace: "marcho78-stage-control", x: 0, y: 0, w: 1280, h: 800 }, { namespace: "notifications", x: 900, y: 40, w: 0, h: 80 }],
+      "3": [{ namespace: "marcho78-stage-control", x: 0, y: 0, w: 1280, h: 800 }, { namespace: "notifications", x: 900, y: 40, w: 0, h: 80 },
+            { namespace: "omarchy-notifications", x: 0, y: 0, w: 1280, h: 800 }],
     } },
     "DP-1": { levels: { "2": [{ namespace: "omarchy-bar", x: 1280, y: 0, w: 1920, h: 26 }] } },
   };
-  const found = plain(Model.surfaces(layers, { name: "eDP-1", x: 0, y: 0 }));
-  assert.deepEqual(found.map((s) => s.namespace), ["omarchy-bar", "omarchy-dock"], "top and overlay only, not Stage Control's own, not empty ones");
+  const found = plain(Model.surfaces(layers, { name: "eDP-1", x: 0, y: 0, w: 1280, h: 800 }));
+  assert.deepEqual(found.map((s) => s.namespace), ["omarchy-bar", "omarchy-dock", "omarchy-notifications"],
+    "top and overlay only, not Stage Control's own, not empty ones");
+  assert.deepEqual(found.map((s) => s.whole), [false, false, true], "one covering the display");
   const other = plain(Model.surfaces(layers, { name: "DP-1", x: 1280, y: 0 }));
   assert.equal(other[0].x, 0, "monitor coordinates");
   assert.deepEqual(plain(Model.surfaces(null, { name: "eDP-1", x: 0, y: 0 })), []);

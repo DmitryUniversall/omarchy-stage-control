@@ -509,6 +509,9 @@ Item {
       } else if (!root.shown) {
         return
       } else if (name === "workspacev2" || name === "focusedmonv2") {
+        // Back on the desktop on screen after showing another (showFirst).
+        if (name === "workspacev2" && root.presizeMode === "show"
+            && Number(String(event.data || "").split(",")[0]) === root.presizeHome) root.endShow(true)
         // Another desktop came on screen: the stage turns to it at once
         // (Overview, "sliding desktops") rather than after the pause the
         // other events wait out.
@@ -771,6 +774,7 @@ Item {
       root.savePinned(root.withPinned(monitorName, ids))
       var monitor = root.snap ? Model.monitorByName(root.snap, monitorName) : null
       if (root.shown && !root.keysOut && Model.presizeRect(root.snap, address, monitor, id)) root.presize(address, id)
+      else if (root.shown && !root.keysOut && Model.showsFirst(root.snap, address, monitor, id)) root.showFirst(address, id, monitor)
       else root.runPlan([{ address: address, to: id }], 0)
     })
   }
@@ -779,18 +783,39 @@ Item {
   // stage, and goes once it has drawn itself at it (Model.presizeRect): in
   // the Spaces bar and opening that desktop it's already the size it is
   // there. It flies into the desktop's thumbnail meanwhile (Overview.endDrag).
+  // One going to a desktop with windows goes at once, and Hyprland shows
+  // that desktop for a moment under the stage (showFirst): there it and the
+  // window it splits draw themselves at their new sizes.
   property string presizeAddress: ""
   property int presizeDesktop: 0
   readonly property bool presizing: presizeAddress !== ""
+  // "maximize" (presize) or "show" (showFirst).
+  property string presizeMode: ""
+  // The desktop on screen, which Hyprland comes back to (showFirst).
+  property int presizeHome: 0
   // Asked to go before Hyprland maximized it (the stage closing, keysOut):
   // it goes right after.
   property bool presizeHurry: false
+  // Desktop `desktop`'s windows drew themselves anew (showFirst): pictures
+  // of them taken before are out of date (WindowTile, DesktopThumb).
+  signal desktopRedrawn(int desktop)
 
   function presize(address, id) {
     presizeAddress = address
     presizeDesktop = id
+    presizeMode = "maximize"
     presizeHurry = false
     if (!presizeRun.start(["/usr/bin/hyprctl", "eval", Model.presizeLua(address)])) endPresize()
+  }
+
+  function showFirst(address, id, monitor) {
+    presizeAddress = address
+    presizeDesktop = id
+    presizeMode = "show"
+    presizeHome = monitor.activeWorkspace
+    showTimeout.restart()
+    if (!presizeRun.start(["/usr/bin/hyprctl", "eval", Model.showFirstLua(address, id, monitor.activeWorkspace, monitor.id, 150)]))
+      endShow(false)
   }
 
   Run {
@@ -799,9 +824,44 @@ Item {
     timeoutMs: 4000
     onFinished: function(ok) {
       if (!root.presizing) return
-      if (ok && !root.presizeHurry) presizeTimer.restart()
-      else root.endPresize()
+      if (root.presizeMode === "show") {
+        // Back on the desktop on screen it's done (onRawEvent).
+        if (!ok) root.endShow(false)
+      } else if (ok && !root.presizeHurry) {
+        presizeTimer.restart()
+      } else {
+        root.endPresize()
+      }
     }
+  }
+
+  // Hyprland is back on the desktop on screen (onRawEvent), or never left
+  // it. `back`: it went and came back, and its windows drew themselves.
+  // Otherwise the move may not have happened, and it's asked for again.
+  function endShow(back) {
+    if (!presizing || presizeMode !== "show") return
+    showTimeout.stop()
+    var move = { address: presizeAddress, to: presizeDesktop }
+    presizeAddress = ""
+    presizeDesktop = 0
+    presizeMode = ""
+    presizeHome = 0
+    // Closing meanwhile, the stage waits for Hyprland's slide back
+    // (finishCloseWhenStill).
+    switchedAt = Date.now()
+    if (back) {
+      refresh(function() { root.nextPlans() })
+      desktopRedrawn(move.to)
+    } else {
+      runPlan([move], 0)
+    }
+  }
+
+  // Its coming back went by unseen.
+  Timer {
+    id: showTimeout
+    interval: 1000
+    onTriggered: root.endShow(true)
   }
 
   Timer {
@@ -818,7 +878,7 @@ Item {
   // Not before the maximizing is through: it would have come after the
   // move, and the window stayed maximized on its new desktop.
   function endPresize() {
-    if (!presizing) return
+    if (!presizing || presizeMode !== "maximize") return
     presizeTimer.stop()
     if (presizeRun.running) {
       presizeHurry = true
@@ -827,6 +887,7 @@ Item {
     var move = { address: presizeAddress, to: presizeDesktop, presized: true }
     presizeAddress = ""
     presizeDesktop = 0
+    presizeMode = ""
     presizeHurry = false
     if (!planRun.start(["/usr/bin/hyprctl", "eval", Model.planLua([move], 0)]))
       planQueue = [function() { root.runPlan([move], 0) }].concat(planQueue)
@@ -922,32 +983,20 @@ Item {
   // it. Closed all the way by the fingers, the keys only came back as the
   // stage went, and the border turned active in plain sight.
   readonly property bool keysOut: shown && (closing || (tracking && swipeIntent === "close"))
-  // The pointer stops reaching the stage at keysOut (Overview.takesInput)
-  // and the keys go a few frames later (keysGone): the two reach Hyprland
-  // in commits of their own, and the keys first, with the stage still
-  // under the pointer, Hyprland gave them to the window that last had them
-  // wherever it was, and went to its desktop (a window just moved to
-  // another one on the stage).
-  property bool keysGone: false
+  // When the keys went back to Hyprland (Overview.keysLetGo, a few frames
+  // into keysOut), 0 until then.
   property real keysOutAt: 0
   onKeysOutChanged: {
-    if (keysOut) {
-      keysGoneTimer.restart()
-      // A window taking its new desktop's size goes now, drawn or not: the
-      // screen coming out from under the stage mustn't show it maximized
-      // where it was.
-      endPresize()
-    } else {
-      keysGoneTimer.stop()
-      keysGone = false
-    }
+    // A window taking its new desktop's size goes now, drawn or not: the
+    // screen coming out from under the stage mustn't show it maximized
+    // where it was.
+    if (keysOut) endPresize()
   }
-  Timer {
-    id: keysGoneTimer
-    interval: 24
-    onTriggered: {
-      root.keysGone = root.keysOut
-      if (root.keysGone) root.keysOutAt = Date.now()
+  function keysWentBack() {
+    keysOutAt = Date.now()
+    if (keysReturnAction) {
+      keysReturnTimer.interval = 30
+      keysReturnTimer.restart()
     }
   }
   readonly property bool interactive: shown && revealed && !tracking && !closing
@@ -1100,8 +1149,29 @@ Item {
       var desktop = options.desktop
       afterKeysReturn(function() { root.goThenClose(desktop, "") })
     } else {
+      // Given the keys back with no window under the pointer, Hyprland may
+      // give them to the window that last had them wherever it is: one moved
+      // to another desktop on the stage, and it went there. It comes back,
+      // under the stage, which waits for it (finishCloseWhenStill).
+      var screen = snap ? Model.focusedMonitor(snap) : null
+      var home = screen ? screen.activeWorkspace : 0
+      if (validId(home)) afterKeysReturn(function() { root.stayOn(home) })
       animateTo(0, options.velocity || 0)
     }
+  }
+
+  // The stage, closed, waits for the answer (finishCloseWhenStill).
+  property bool checkingHome: false
+  function stayOn(desktop) {
+    checkingHome = true
+    refresh(function(ok) {
+      root.checkingHome = false
+      var screen = ok && root.snap ? Model.focusedMonitor(root.snap) : null
+      if (screen && root.closing && screen.activeWorkspace !== desktop) root.goTo(desktop, "")
+      root.whenPlansDone(function() {
+        if (root.closing && root.progress <= 0.001 && !barDropAnim.running && !stillTimer.running) root.finishCloseWhenStill()
+      })
+    })
   }
 
   // Goes there (goTo), and closes once the stage has what's on screen
@@ -1111,16 +1181,18 @@ Item {
     whenPlansDone(function() { if (root.closing) root.animateTo(0) })
   }
 
-  // `action` a moment after the stage gave the keys back (see close()), if
-  // it's still closing then.
+  // `action` a moment after the stage gave the keys back (see close(),
+  // keysWentBack()), if it's still closing then. Should no stage hold them
+  // (none on the focused display), a little later.
   property var keysReturnAction: null
   function afterKeysReturn(action) {
     keysReturnAction = action
+    keysReturnTimer.interval = keysOutAt > 0 ? 30 : 100
     keysReturnTimer.restart()
   }
   Timer {
     id: keysReturnTimer
-    interval: 60
+    interval: 100
     onTriggered: {
       var action = root.keysReturnAction
       root.keysReturnAction = null
@@ -1133,6 +1205,14 @@ Item {
   // active. The stage, at rest, shows the desktop as it will be: it stays
   // on screen until Hyprland is done, so that doesn't show after it.
   function finishCloseWhenStill() {
+    // Not with a window still taking its new size (presize): Hyprland may
+    // be on its new desktop, or the window maximized where it was.
+    if (presizing) {
+      whenPlansDone(function() { if (root.closing && root.progress <= 0.001) root.finishCloseWhenStill() })
+      return
+    }
+    // Nor before it knows Hyprland stayed (stayOn), which asks again.
+    if (checkingHome) return
     var slideMs = workspaceAnimationMs === null ? 500 : workspaceAnimationMs
     var borderMs = borderAnimationMs === null ? 300 : borderAnimationMs
     var now = Date.now()
@@ -1195,6 +1275,7 @@ Item {
 
   function finishClose() {
     stillTimer.stop()
+    checkingHome = false
     stopBarDrop()
     switchedAt = 0
     keysOutAt = 0

@@ -120,7 +120,11 @@ function snapshot(clients, monitors, workspaces) {
 
 // Layer-shell surfaces above the windows (bar, dock, notifications) on one
 // monitor, in monitor coordinates, from `hyprctl -j layers`. Stage Control's own
-// surfaces are left out.
+// surfaces are left out. `whole`: it covers the whole display (Omarchy's
+// notifications, one surface for all, whatever shows in it). The stage draws
+// them from the screen as it opened (Overview), and one of those, put back
+// as the stage closed on another desktop, put back the whole desktop it had
+// left.
 function surfaces(layers, monitor) {
   var out = []
   if (!layers || typeof layers !== "object" || !monitor) return out
@@ -132,7 +136,8 @@ function surfaces(layers, monitor) {
       if (name.indexOf("marcho78-stage-control") === 0) return
       var w = int(surface.w, 0), h = int(surface.h, 0)
       if (w <= 0 || h <= 0) return
-      out.push({ namespace: name, level: Number(level), x: int(surface.x, 0) - monitor.x, y: int(surface.y, 0) - monitor.y, w: w, h: h })
+      var whole = monitor.w > 0 && monitor.h > 0 && w >= monitor.w && h >= monitor.h
+      out.push({ namespace: name, level: Number(level), x: int(surface.x, 0) - monitor.x, y: int(surface.y, 0) - monitor.y, w: w, h: h, whole: whole })
     })
   })
   return out
@@ -591,16 +596,19 @@ function reorderPlan(snap, monitorName, pinnedByMonitor, fromId, toId) {
 // to a desktop of its own takes that size first, where it is, under the
 // stage: maximized, which is the size Hyprland gives a window alone on a
 // desktop. It draws itself, and goes (presized, planLua) the size it is
-// there. Service.moveWindowToDesktop.
+// there. One going to a desktop with windows has the size Hyprland splits
+// off one of them, and that one shrinks too: there Hyprland shows that
+// desktop for a moment, under the stage, and comes back (showFirstLua).
+// Service.moveWindowToDesktop.
 
 // Where window `address` will be alone on a desktop of its own (on its
 // display, as localRect), if it should take that size first; else null.
 // `desktop` is where it goes, 0 for a new desktop. Only a tiled window of
 // the desktop on screen sharing it with others (alone it has that size
-// already), going to an empty desktop on the same display: on one with
-// windows its size depends on which one Hyprland splits. Not one in a tab
-// group, nor an XWayland one (Hyprland doesn't suspend those), nor while a
-// window there is fullscreen (maximizing would take that away).
+// already), going to a desktop on the same display with no tiled windows
+// (with some, see showsFirst). Not one in a tab group, nor an XWayland one
+// (Hyprland doesn't suspend those), nor while a window there is fullscreen
+// (maximizing would take that away).
 function presizeRect(snap, address, monitor, desktop) {
   if (!snap || !monitor || !isAddress(address)) return null
   var win = null
@@ -609,7 +617,7 @@ function presizeRect(snap, address, monitor, desktop) {
   if (win.floating || win.fullscreen !== 0 || win.pinned || win.hidden || win.special || win.grouped || win.xwayland) return null
   if (desktop === win.workspace) return null
   if (desktop > 0) {
-    if (snap.windows.some(function(w) { return w.workspace === desktop })) return null
+    if (tiledOn(snap, desktop)) return null
     if (snap.workspaces.some(function(ws) { return ws.id === desktop && ws.monitor !== monitor.name })) return null
   }
   var here = snap.windows.filter(function(w) {
@@ -628,6 +636,50 @@ function presizeRect(snap, address, monitor, desktop) {
   })
   if (left === win.x && top === win.y && right === win.x + win.w && bottom === win.y + win.h) return null
   return localRect({ x: left, y: top, w: right - left, h: bottom - top }, monitor)
+}
+
+// Whether desktop `id` has windows Hyprland tiles (floating ones keep
+// their size whatever comes).
+function tiledOn(snap, id) {
+  return snap.windows.some(function(w) { return w.workspace === id && !w.floating })
+}
+
+// Whether window `address` should go to desktop `desktop` with that desktop
+// shown for a moment (showFirstLua): a tiled window of the desktop on
+// screen going to a desktop of the same display that has tiled windows.
+function showsFirst(snap, address, monitor, desktop) {
+  if (!snap || !monitor || !isAddress(address) || !(desktop > 0)) return false
+  var win = null
+  for (var i = 0; i < snap.windows.length; i++) if (snap.windows[i].address === address) win = snap.windows[i]
+  if (!win || win.monitor !== monitor.id || win.workspace !== monitor.activeWorkspace || desktop === win.workspace) return false
+  if (win.floating || win.fullscreen !== 0 || win.pinned || win.hidden || win.special) return false
+  var ws = null
+  for (var j = 0; j < snap.workspaces.length; j++) if (snap.workspaces[j].id === desktop) ws = snap.workspaces[j]
+  return !!ws && ws.monitor === monitor.name && tiledOn(snap, desktop)
+}
+
+// Lua for hyprctl eval that moves window `address` to desktop `desktop`
+// and shows that desktop, where Hyprland lets its windows draw themselves
+// at their new sizes, and `ms` later comes back to desktop `here` (on
+// display `monitorId`). By way of the desktop it last came from, unless
+// that's on another display: Hyprland's "previous desktop"
+// (Super+Ctrl+Tab) stays the one it was.
+function showFirstLua(address, desktop, here, monitorId, ms) {
+  function whole(n) { return typeof n === "number" && isFinite(n) && Math.round(n) === n }
+  if (!isAddress(address) || !whole(desktop) || !whole(here) || desktop <= 0 || here <= 0 || desktop >= 100000 || here >= 100000
+      || desktop === here || !whole(monitorId) || monitorId < 0 || !whole(ms) || ms <= 0 || ms > 2000) return ""
+  return [
+    "local back = hl.get_last_workspace()",
+    "local backId = back and back.id or 0",
+    "local backHere = backId > 0 and backId ~= " + desktop + " and backId ~= " + here
+      + " and not back.visible and back.monitor ~= nil and back.monitor.id == " + monitorId,
+    "hl.dispatch(hl.dsp.window.move({ window = \"address:" + address + "\", workspace = \"" + desktop + "\", follow = false }))",
+    "hl.dispatch(hl.dsp.focus({ workspace = \"" + desktop + "\" }))",
+    "hl.timer(function()",
+    "  if backHere then hl.dispatch(hl.dsp.focus({ workspace = tostring(backId) })) end",
+    "  hl.dispatch(hl.dsp.focus({ workspace = \"" + here + "\" }))",
+    "end, { timeout = " + ms + ", type = \"oneshot\" })"
+  ].join("\n")
 }
 
 // Lua for hyprctl eval that maximizes window `address`, the first step of a

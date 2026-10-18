@@ -76,6 +76,19 @@ Item {
     target: thumb.overview
     function onShowsHereChanged() { if (!thumb.overview.showsHere) thumb.previews = false }
   }
+  // Hyprland showed this desktop for a moment, under the stage, and its
+  // windows drew themselves at new sizes (Service.showFirst): the frames
+  // held from before are taken again.
+  Connections {
+    target: thumb.service
+    function onDesktopRedrawn(desktop) {
+      if (desktop !== thumb.modelData) return
+      for (var i = 0; i < minis.count; i++) {
+        var item = minis.itemAt(i)
+        if (item) item.recapture()
+      }
+    }
+  }
   Component.onCompleted: {
     if (wantsPreviews) previews = true
     if (strip) strip.registerThumb(modelData, thumb)
@@ -147,6 +160,7 @@ Item {
 
       // The desktop's windows, where they are on the display.
       Repeater {
+        id: minis
         model: ScriptModel { values: thumb.info && thumb.previews ? thumb.info.windows : [] }
         delegate: Item {
           id: mini
@@ -188,7 +202,12 @@ Item {
               property var source: mini.tilePreview
             }
           }
+          // Its windows drew themselves anew (Service.desktopRedrawn).
+          function recapture() {
+            if (shot.captureSource) shot.captureFrame()
+          }
           ScreencopyView {
+            id: shot
             anchors.fill: parent
             visible: !mini.tilePreview
             captureSource: !mini.tilePreview && thumb.overview && thumb.overview.showsHere && mini.handle

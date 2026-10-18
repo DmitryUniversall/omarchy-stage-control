@@ -133,7 +133,7 @@ PanelWindow {
   implicitHeight: 1
   // Input only where the stage is: the top bar's clicks go to the bar. None
   // once it starts to give the keys back (Service.keysOut: closing, or the
-  // fingers closing it; they go a few frames later, Service.keysGone), nor
+  // fingers closing it; they go a few frames later, keysLetGo), nor
   // while the closed stage waits for Hyprland
   // (Service.holdingStill). Under the pointer as it gave the keys back, the
   // stage had Hyprland give them to the window that last had them wherever
@@ -153,12 +153,30 @@ PanelWindow {
   // close: Hyprland then gives them to the window under the stage, which
   // turns active again, border and all, while the stage still covers it.
   // Given back only once the stage was gone, the window's border visibly
-  // went from inactive to active just as it showed (Service.keysOut; the
-  // keys go a few frames after the pointer stops reaching the stage,
-  // Service.keysGone). Let go for a moment while the stage goes to another
-  // desktop (Service.switchDesktop).
-  WlrLayershell.keyboardFocus: showsHere && !!service && !service.testMode && !service.keysGone && !service.handingKeys
-    && monitor.focused ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+  // went from inactive to active just as it showed (Service.keysOut; they
+  // go a few frames in, keysLetGo). Let go for a moment while the stage goes
+  // to another desktop (Service.switchDesktop).
+  readonly property bool holdsKeys: showsHere && !!service && !service.testMode && !service.handingKeys && !!monitor && monitor.focused
+  WlrLayershell.keyboardFocus: holdsKeys && !keysLetGo ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+
+  // The keys go three frames after the pointer stops reaching the stage
+  // (takesInput, at Service.keysOut): frames the stage has drawn since,
+  // with its new input region, which reach Hyprland with them. Let go at
+  // the same moment, the two reached Hyprland in either order, and finding
+  // the stage still under the pointer Hyprland gave the keys to the window
+  // that last had them wherever it was, and went to its desktop: a window
+  // just moved to another one on the stage took it there. (A timer was
+  // no better: a busy moment held back the frames, not the timer.)
+  property bool keysLetGo: false
+  FrameAnimation {
+    running: win.showsHere && !!win.service && win.service.keysOut && !win.keysLetGo
+    onTriggered: if (currentFrame >= 3) win.keysLetGo = true
+  }
+  onKeysLetGoChanged: if (keysLetGo && holdsKeys) service.keysWentBack()
+  Connections {
+    target: win.service
+    function onKeysOutChanged() { if (!win.service.keysOut) win.keysLetGo = false }
+  }
 
   function smooth(edge0, edge1, x) {
     var t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)))
@@ -1222,6 +1240,19 @@ PanelWindow {
     return { x: rect.x + (rect.w - shape.w * fit) / 2, y: rect.y + (rect.h - shape.h * fit) / 2, w: shape.w * fit, h: shape.h * fit }
   }
 
+  // Windows that drew themselves anew on a desktop Hyprland showed for a
+  // moment (Service.showFirst): the pictures of them waiting off screen,
+  // which open that desktop from its thumbnail, are taken again.
+  Connections {
+    target: win.service
+    function onDesktopRedrawn(desktop) {
+      for (var address in win.tileItems) {
+        var info = win.tileData[address]
+        if (info && info.workspace === desktop) win.tileItems[address].refreshPreview()
+      }
+    }
+  }
+
   function cancelDrag() {
     var tile = tileItems[dragAddress]
     var info = tileData[dragAddress]
@@ -1549,7 +1580,10 @@ PanelWindow {
           sourceRect: Qt.rect(modelData.x, modelData.y, modelData.w, modelData.h)
           live: false
           hideSource: false
-          opacity: 1 - win.smooth(0, 0.22, win.p)
+          // One covering the whole display (Model.surfaces) only as the stage
+          // opens: it's the whole screen as it was, and closing (on another
+          // desktop, or with windows moved) it put that back over the stage.
+          opacity: (1 - win.smooth(0, 0.22, win.p)) * (modelData.whole && win.service.keysOut ? 0 : 1)
           visible: opacity > 0.01 && screenGhost.hasContent
         }
       }
