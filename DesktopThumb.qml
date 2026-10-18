@@ -19,7 +19,18 @@ Item {
   readonly property var info: overview && overview.desktopData ? (overview.desktopData[modelData] || null) : null
   readonly property bool active: !!info && info.active
   readonly property real ex: strip ? strip.expand : 0
-  readonly property bool hovered: hover.hovered
+  // Pointed at: the desktop, or its × (which sticks out past its corner,
+  // and whose hover the desktop's own HoverHandler, below it, doesn't get).
+  // The × went away the moment the pointer reached it, came back as it did,
+  // and so on: it couldn't be clicked.
+  readonly property bool hovered: hover.hovered || removeMouse.containsMouse
+  // Whether this desktop can be removed now: not the last one, nor while
+  // a desktop or a window is dragged or a desktop renamed.
+  readonly property bool removable: !!strip && strip.count > 1 && !!overview && !overview.dragging
+    && strip.draggingDesktop === 0 && strip.renamingDesktop === 0
+  function remove() {
+    if (removable) service.removeDesktop(overview.screenName, modelData)
+  }
   readonly property bool dropTarget: !!overview && !!overview.dropTarget
     && overview.dropTarget.kind === "desktop" && overview.dropTarget.id === modelData
   readonly property bool beingDragged: !!strip && strip.draggingDesktop === modelData
@@ -124,6 +135,10 @@ Item {
 
   Item {
     id: picture
+    // Over the desktop's hit area (hitArea, below): its HoverHandler takes
+    // the hover of whatever is under it, and the × never had the pointer.
+    // Nothing else in here takes it, so the rest goes on to the hit area.
+    z: 1
     anchors.horizontalCenter: parent.horizontalCenter
     width: strip ? strip.thumbW : 0
     height: strip ? strip.thumbH : 0
@@ -243,8 +258,7 @@ Item {
     // Delete, top-left, like macOS. The last desktop can't be removed.
     Glass {
       id: removeButton
-      readonly property bool wanted: thumb.hovered && thumb.ex > 0.9 && !!thumb.strip && thumb.strip.count > 1
-        && !thumb.overview.dragging && thumb.strip.draggingDesktop === 0 && thumb.strip.renamingDesktop === 0
+      readonly property bool wanted: thumb.hovered && thumb.ex > 0.9 && thumb.removable
       x: -9
       y: -9
       width: 22
@@ -278,7 +292,7 @@ Item {
         hoverEnabled: true
         enabled: removeButton.wanted
         cursorShape: Qt.PointingHandCursor
-        onClicked: thumb.service.removeDesktop(thumb.overview.screenName, thumb.modelData)
+        onClicked: thumb.remove()
       }
     }
   }
@@ -379,7 +393,10 @@ Item {
     containmentMask: hitArea.containmentMask
     // Off while any desktop is renamed: a click then only keeps the name.
     enabled: !!thumb.service && thumb.service.interactive && !!thumb.strip && thumb.strip.renamingDesktop === 0
-    acceptedButtons: Qt.LeftButton | Qt.RightButton
+    // Middle-click removes the desktop, as its × does, unless middle-clicks
+    // are off (the middleClickClose setting, which windows follow too).
+    readonly property bool middleRemoves: !!thumb.service && !!thumb.service.settings && thumb.service.settings.middleClickClose !== false
+    acceptedButtons: Qt.LeftButton | Qt.RightButton | (middleRemoves ? Qt.MiddleButton : Qt.NoButton)
     cursorShape: thumb.beingDragged ? Qt.ClosedHandCursor : Qt.PointingHandCursor
     // Under the delete button.
     z: -1
@@ -407,6 +424,7 @@ Item {
       // The desktop on screen opens from its thumbnail too (closeOnDesktop).
       thumb.overview.closeOnDesktop(thumb.modelData)
     }
+    onClicked: function(event) { if (event.button === Qt.MiddleButton) thumb.remove() }
     onCanceled: if (thumb.strip.draggingDesktop === thumb.modelData) thumb.strip.cancelDesktopDrag()
   }
 

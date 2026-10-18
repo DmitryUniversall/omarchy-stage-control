@@ -32,9 +32,9 @@ Close windows, or swipe down for just the current app's windows.
   hidden desktops at their old picture until they show): one that gets a
   desktop to itself takes its full size on the way; for a desktop with
   windows, Hyprland shows that desktop for a moment under the stage.
-  Drag desktops to reorder them. Hover one and click **×** to remove it; its
-  windows move to the desktop before it (after it, for the first one).
-  Right-click one to rename it.
+  Drag desktops to reorder them. Hover one and click **×**, or middle-click
+  it, to remove it; its windows move to the desktop before it (after it, for
+  the first one). Right-click one to rename it.
 * **Close windows.** Hover a window and click its **×**, middle-click it, or
   pick it and press Ctrl+W.
 * **App Exposé.** Swipe down to see every window of the app you're using, on
@@ -118,7 +118,7 @@ settings: the icon then takes no space.
 | Move a window to a desktop | Drag it onto the desktop in the Spaces bar |
 | Put a window on a new desktop | Drag it onto **+** |
 | Add a desktop | Click **+** in the Spaces bar |
-| Remove a desktop | Hover it in the Spaces bar and click **×** |
+| Remove a desktop | Hover it in the Spaces bar and click **×**, or middle-click it |
 | Reorder desktops | Drag a desktop sideways in the Spaces bar |
 | Rename a desktop | Right-click it in the Spaces bar, type a name and press Return (Esc cancels; an empty name goes back to "Desktop 3") |
 | Close a window | Hover it and click **×**, middle-click it, or pick it and press Ctrl+W |
@@ -179,7 +179,7 @@ out of the bar, so your settings go with it.
 | `barReturn` | `inside` | with `keepBar` off, how the top bar comes back when you go to a desktop from the Spaces bar: `inside` (part of the desktop, out of its thumbnail with it), `inside-static` (same bar behavior; desktop thumbnails stay in place without sliding away or fading until the chosen desktop covers them), `during` (slides down as the desktop opens), `after` (once it has opened) |
 | `renumberDesktops` | `true` | close the gap when a desktop is removed |
 | `closeButtons` | `true` | a close button on the window under the pointer |
-| `middleClickClose` | `true` | middle-click closes a window |
+| `middleClickClose` | `true` | middle-click closes a window, and removes a desktop in the Spaces bar |
 | `showMinimized` | `true` | minimized windows in App Exposé |
 | `background` | `blur` | `blur`, `dim` |
 | `dim` | `25` | 0–80 (%) |

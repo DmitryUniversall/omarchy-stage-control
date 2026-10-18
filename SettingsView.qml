@@ -600,6 +600,7 @@ Item {
         Toggle {
           width: parent.width
           label: "Middle-click closes windows"
+          description: "And removes a desktop middle-clicked in the Spaces bar, as its × does."
           checked: root.settings.middleClickClose !== false
           onClicked: root.set("middleClickClose", root.settings.middleClickClose === false)
         }
