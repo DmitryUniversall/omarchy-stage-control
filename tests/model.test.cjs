@@ -440,6 +440,13 @@ function applyPlan(snap, plan) {
   assert.equal(Model.borderAnimationMs([[anim("global", true, true, 10), anim("border", false, true, 0)]]), 1000, "as it takes it from global");
   assert.equal(Model.borderAnimationMs([[anim("global", true, false, 10), anim("border", false, true, 0)]]), 0, "off");
   assert.equal(Model.borderAnimationMs(null), null);
+  // Omarchy's: windowsMove as it takes it from windows.
+  assert.equal(Model.windowAnimationMs([[anim("global", true, true, 10), anim("windows", true, true, 3.79), anim("windowsMove", false, true, 0)]]), 379);
+  assert.equal(Model.windowAnimationMs([[anim("global", true, true, 10), anim("windows", true, true, 3.79), anim("windowsMove", true, true, 2)]]), 200);
+  assert.equal(Model.windowAnimationMs([[anim("global", true, true, 10), anim("windows", false, true, 0), anim("windowsMove", false, true, 0)]]), 1000,
+    "as it takes it from global");
+  assert.equal(Model.windowAnimationMs([[anim("global", true, true, 10), anim("windows", true, false, 3.79)]]), 0, "off");
+  assert.equal(Model.windowAnimationMs(null), null);
 
   const snap = world([
     client("0xa", "foot", 1, [0, 0], [10, 10]), client("0xb", "foot", 2, [0, 0], [10, 10]),

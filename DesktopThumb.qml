@@ -76,9 +76,9 @@ Item {
     target: thumb.overview
     function onShowsHereChanged() { if (!thumb.overview.showsHere) thumb.previews = false }
   }
-  // Hyprland showed this desktop for a moment, under the stage, and its
-  // windows drew themselves at new sizes (Service.showFirst): the frames
-  // held from before are taken again.
+  // This desktop's windows drew themselves at new sizes, and Hyprland is
+  // done resizing them (Service.redrawLater): the frames held from before,
+  // or taken on the way, are taken again.
   Connections {
     target: thumb.service
     function onDesktopRedrawn(desktop) {
@@ -206,9 +206,17 @@ Item {
           function recapture() {
             if (shot.captureSource) shot.captureFrame()
           }
+          // Filling the window's place, stretched if need be, as on the stage
+          // (WindowTile): a picture of another shape, fitted, left bars.
           ScreencopyView {
             id: shot
-            anchors.fill: parent
+            readonly property bool shaped: hasContent && sourceSize.width > 0 && sourceSize.height > 0
+            width: shaped ? sourceSize.width : mini.width
+            height: shaped ? sourceSize.height : mini.height
+            transform: Scale {
+              xScale: mini.width / Math.max(1, shot.width)
+              yScale: mini.height / Math.max(1, shot.height)
+            }
             visible: !mini.tilePreview
             captureSource: !mini.tilePreview && thumb.overview && thumb.overview.showsHere && mini.handle
               ? mini.handle.wayland : null

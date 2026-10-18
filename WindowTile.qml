@@ -69,6 +69,10 @@ Item {
   readonly property int restWidth: Math.max(1, Math.round(from.x * dpr + from.w * dpr - restLeft))
   readonly property int restHeight: Math.max(1, Math.round(from.y * dpr + from.h * dpr - restTop))
   readonly property bool hasContent: capture.hasContent
+  // Hyprland shows another desktop for a moment (Service.showFirst), and
+  // this window isn't on it: its preview holds the frame it has (capture).
+  readonly property bool heldByShow: !!service && service.presizeMode === "show" && !!info
+    && info.workspace !== service.presizeDesktop && modelData !== service.presizeAddress
   // The live preview as rendered here, for the Spaces bar's picture of this
   // desktop (DesktopThumb), so it needn't capture the window again.
   readonly property Item preview: frame.contentLayer
@@ -505,18 +509,35 @@ Item {
     pixelRatio: tile.dpr
     opacity: tile.windowAlpha
 
+    // The picture fills the preview, stretched if it has another shape:
+    // ScreencopyView fits a picture inside itself keeping the picture's
+    // shape, and one of another shape left bars at its sides. While
+    // Hyprland resizes a window the pictures come at every size on the way,
+    // and one a window waited off screen with may be from before it was
+    // resized: the window seemed to jump narrower and back. So it's laid out
+    // at the picture's own size and scaled to the preview's.
     ScreencopyView {
       id: capture
-      anchors.fill: parent
+      readonly property bool shaped: hasContent && sourceSize.width > 0 && sourceSize.height > 0
+      width: shaped ? sourceSize.width : parent.width
+      height: shaped ? sourceSize.height : parent.height
+      transform: Scale {
+        xScale: capture.parent ? capture.parent.width / Math.max(1, capture.width) : 1
+        yScale: capture.parent ? capture.parent.height / Math.max(1, capture.height) : 1
+      }
       captureSource: tile.overview && tile.overview.showsHere && tile.handle ? tile.handle.wayland : null
       // Not while the stage opens or closes by itself: Hyprland renders a
       // live capture again on every frame, changed or not, and those frames
       // are the ones with the least time to spare. The window flies with the
       // frame it has and comes alive again when it lands. While the fingers
       // hold the stage, it stays live.
-      // Nor while desktops slide or follow a swipe (Overview.moving).
+      // Nor while desktops slide or follow a swipe (Overview.moving). Nor
+      // while Hyprland shows another desktop for a moment (Service.showFirst)
+      // for any but its windows and the one going there: the others can't
+      // draw themselves then, and those Hyprland resized showed their old
+      // picture in their new size, the rest of it blank.
       live: !!tile.overview && tile.overview.showsHere && !(tile.service && tile.service.animating) && !tile.overview.moving
-        && !tile.peek && !(tile.stays && tile.opacity < 0.01)
+        && !tile.peek && !(tile.stays && tile.opacity < 0.01) && !tile.heldByShow
     }
   }
 

@@ -758,6 +758,23 @@ function borderAnimationMs(json) {
   return a.enabled && speed > 0 && speed < 1000 ? Math.round(speed * 100) : 0
 }
 
+// How long Hyprland takes to move or resize a window: its "windowsMove"
+// animation, as it is or as it takes it from "windows", then "global". 0
+// when it's off, null when the list can't be read.
+function windowAnimationMs(json) {
+  var all = {}
+  ;(Array.isArray(json) ? json : []).forEach(function(group) {
+    ;(Array.isArray(group) ? group : []).forEach(function(a) {
+      if (a && typeof a.name === "string") all[a.name] = a
+    })
+  })
+  if (!all.global) return null
+  var a = all.windowsMove && all.windowsMove.overridden ? all.windowsMove
+    : all.windows && all.windows.overridden ? all.windows : all.global
+  var speed = Number(a.speed)
+  return a.enabled && speed > 0 && speed < 1000 ? Math.round(speed * 100) : 0
+}
+
 // The desktop window `address` is on, when that desktop isn't on screen;
 // else 0.
 function hiddenDesktopOf(snap, address) {

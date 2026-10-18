@@ -155,9 +155,14 @@ PanelWindow {
   // Given back only once the stage was gone, the window's border visibly
   // went from inactive to active just as it showed (Service.keysOut; they
   // go a few frames in, keysLetGo). Let go for a moment while the stage goes
-  // to another desktop (Service.switchDesktop).
+  // to another desktop (Service.switchDesktop). With the window that last
+  // had them gone to another desktop (Service.keysGently), given back on
+  // demand until the stage is gone: Hyprland then lets the pointer pick a
+  // window rather than giving them to that one, wherever it is.
   readonly property bool holdsKeys: showsHere && !!service && !service.testMode && !service.handingKeys && !!monitor && monitor.focused
-  WlrLayershell.keyboardFocus: holdsKeys && !keysLetGo ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+  WlrLayershell.keyboardFocus: !holdsKeys ? WlrKeyboardFocus.None
+    : !keysLetGo ? WlrKeyboardFocus.Exclusive
+    : service.keysGently ? WlrKeyboardFocus.OnDemand : WlrKeyboardFocus.None
 
   // The keys go three frames after the pointer stops reaching the stage
   // (takesInput, at Service.keysOut): frames the stage has drawn since,
@@ -1063,6 +1068,17 @@ PanelWindow {
       bar: barOn(id) && (!monitor || barOn(monitor.activeWorkspace)) } : null
     service.close({ desktop: id, zoom: !!zoomInto, here: here })
     if (zoomInto) rebuild()
+    // Another desktop's windows open with the pictures they waited off
+    // screen with, taken who knows when: taken again now, while they're still
+    // thumbnail-sized, they're as the windows are when the stage is gone.
+    if (zoomInto && !here) refreshPreviewsOf(id)
+  }
+
+  function refreshPreviewsOf(desktop) {
+    for (var address in tileItems) {
+      var info = tileData[address]
+      if (info && info.workspace === desktop) tileItems[address].refreshPreview()
+    }
   }
 
   Connections {
@@ -1240,17 +1256,13 @@ PanelWindow {
     return { x: rect.x + (rect.w - shape.w * fit) / 2, y: rect.y + (rect.h - shape.h * fit) / 2, w: shape.w * fit, h: shape.h * fit }
   }
 
-  // Windows that drew themselves anew on a desktop Hyprland showed for a
-  // moment (Service.showFirst): the pictures of them waiting off screen,
-  // which open that desktop from its thumbnail, are taken again.
+  // Windows that drew themselves anew at new sizes on another desktop, and
+  // that Hyprland is done resizing (Service.redrawLater): the pictures of
+  // them waiting off screen, which open that desktop from its thumbnail, are
+  // taken again.
   Connections {
     target: win.service
-    function onDesktopRedrawn(desktop) {
-      for (var address in win.tileItems) {
-        var info = win.tileData[address]
-        if (info && info.workspace === desktop) win.tileItems[address].refreshPreview()
-      }
-    }
+    function onDesktopRedrawn(desktop) { win.refreshPreviewsOf(desktop) }
   }
 
   function cancelDrag() {
