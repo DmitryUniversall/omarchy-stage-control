@@ -17,6 +17,13 @@ let passed = 0;
   assert.equal(parts[0][0].title, 'a ] tricky [ "title" {');
   assert.deepEqual(parts[2], []);
   assert.throws(() => Model.splitJson('[{"a": 1}'), /truncated/);
+  // An option hyprctl doesn't know answers in plain text; a string can end
+  // in an escaped backslash.
+  const mixed = plain(Model.splitJson('{"option": "a", "int": 2}\n\n\nno such option\n\n\n[{"path": "C:\\\\"}, {"q": "}"}]\n'));
+  assert.equal(mixed.length, 2);
+  assert.equal(mixed[0].int, 2);
+  assert.equal(mixed[1][0].path, 'C:\\');
+  assert.equal(mixed[1][1].q, '}');
   passed++;
 }
 
@@ -69,6 +76,11 @@ const ws = (id, monitor, windows) => ({ id, name: String(id), monitor: monitor |
   const snap = plain(world([], [], [{ id: 1, name: "DP-1", x: 1280, y: 0, width: 1920, height: 1080, scale: 1, transform: 1, activeWorkspace: { id: 3 }, specialWorkspace: { id: 0 }, reserved: [0, 0, 0, 0] }]));
   assert.equal(snap.monitors[0].w, 1080);
   assert.equal(snap.monitors[0].h, 1920);
+  // The stage's animations step a frame at a time: 60 a second when
+  // Hyprland doesn't say.
+  assert.equal(snap.monitors[0].refreshRate, 60);
+  const fast = plain(world([], [], [{ id: 1, name: "DP-1", width: 1920, height: 1080, scale: 1, refreshRate: 119.98, activeWorkspace: { id: 1 }, specialWorkspace: { id: 0 }, reserved: [0, 0, 0, 0] }]));
+  assert.equal(fast.monitors[0].refreshRate, 119.98);
   passed++;
 }
 

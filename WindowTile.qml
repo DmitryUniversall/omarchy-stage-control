@@ -100,14 +100,56 @@ Item {
   // where they were (a desktop picked in the Spaces bar opens from its
   // thumbnail, Overview.closeOnDesktop).
   readonly property bool animateLayout: !!service && service.revealed && !service.tracking && !service.closing && p > 0.99
-  property real tx: info ? info.to.x : 0
-  property real ty: info ? info.to.y : 0
-  property real tw: info ? info.to.w : 1
-  property real th: info ? info.to.h : 1
-  Behavior on tx { enabled: tile.animateLayout; NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
-  Behavior on ty { enabled: tile.animateLayout; NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
-  Behavior on tw { enabled: tile.animateLayout; NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
-  Behavior on th { enabled: tile.animateLayout; NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
+  // Where it shows (tx, ty, tw, th): its place, or on the way there from
+  // where it showed when the place changed (layoutFrom, a frame at a time,
+  // FrameAnim).
+  readonly property var place: info ? info.to : null
+  property real tx: 0
+  property real ty: 0
+  property real tw: 1
+  property real th: 1
+  property var layoutFrom: null
+  property var layoutTo: ({ x: 0, y: 0, w: 1, h: 1 })
+  property real layoutT: 1
+  onPlaceChanged: followPlace()
+  onLayoutTChanged: showLayout()
+  FrameAnim {
+    id: layoutAnimation
+    service: tile.service
+    target: tile
+    propertyName: "layoutT"
+    from: 0
+    to: 1
+    duration: 320
+    easing: Easing.Linear
+  }
+
+  // Its first place it takes as it is.
+  property bool laidOut: false
+  function followPlace() {
+    var to = place ? { x: place.x, y: place.y, w: place.w, h: place.h } : { x: 0, y: 0, w: 1, h: 1 }
+    if (laidOut && to.x === layoutTo.x && to.y === layoutTo.y && to.w === layoutTo.w && to.h === layoutTo.h) return
+    layoutFrom = laidOut && animateLayout ? { x: tx, y: ty, w: tw, h: th } : null
+    layoutTo = to
+    laidOut = true
+    if (layoutFrom) {
+      layoutAnimation.restart()
+    } else {
+      layoutAnimation.stop()
+      layoutT = 1
+      showLayout()
+    }
+  }
+
+  function showLayout() {
+    var to = layoutTo
+    var from = layoutFrom && layoutT < 1 ? layoutFrom : to
+    var e = 1 - Math.pow(1 - layoutT, 3)
+    tx = lerp(from.x, to.x, e)
+    ty = lerp(from.y, to.y, e)
+    tw = lerp(from.w, to.w, e)
+    th = lerp(from.h, to.h, e)
+  }
 
   readonly property var from: info ? info.from : ({ x: 0, y: 0, w: 1, h: 1 })
 
@@ -122,14 +164,15 @@ Item {
   property var dropFrom: ({ x: 0, y: 0, w: 1, h: 1 })
   property var dropTo: ({ x: 0, y: 0, w: 1, h: 1 })
   property real dropT: 0
-  NumberAnimation {
+  FrameAnim {
     id: dropAnimation
+    service: tile.service
     target: tile
-    property: "dropT"
+    propertyName: "dropT"
     from: 0
     to: 1
     duration: 300
-    easing.type: Easing.InOutCubic
+    easing: Easing.InOutCubic
     onFinished: if (!tile.dropFades || tile.peek) tile.endDrop()
   }
 
@@ -180,11 +223,11 @@ Item {
   property real slideX: 0
   // The swipe moves every tile at once (Overview.trackX).
   transform: Translate { x: tile.slideX + (tile.overview ? tile.overview.trackX : 0) }
-  NumberAnimation {
+  FrameAnim {
     id: slideAnimation
+    service: tile.service
     target: tile
-    property: "slideX"
-    easing.type: Easing.OutCubic
+    propertyName: "slideX"
   }
 
   function slideTo(target, duration) {
@@ -235,6 +278,7 @@ Item {
   }
 
   Component.onCompleted: {
+    followPlace()
     if (!overview) return
     overview.registerTile(modelData, tile)
     if (peek) placeAt(info.peekPage * overview.pageShift)
@@ -397,9 +441,16 @@ Item {
   // The live preview is rendered at the window's size times the first power
   // of 0.8 at or above the tile's scale: never below the size it shows at,
   // never far above it, and while the tile travels it's rendered at a new size
-  // a few times instead of on every frame.
+  // a few times instead of on every frame. Moving to a new place in the
+  // layout (the Spaces bar opening, a window closing), at the size for the
+  // largest it is on the way: shrinking past a step, it was rendered again
+  // in the middle of the move, a new texture of several megabytes that held
+  // that frame up; now that happens once it's there (or, growing, as it
+  // sets off).
+  readonly property real renderWidth: layoutAnimation.running && layoutFrom
+    ? Math.max(width, layoutFrom.w, layoutTo.w) : width
   readonly property real renderScale: {
-    var s = info ? width / Math.max(1, info.size.w) : 1
+    var s = info ? renderWidth / Math.max(1, info.size.w) : 1
     if (!(s < 1)) return 1
     return Math.max(0.2, Math.pow(0.8, Math.floor(Math.log(s) / Math.log(0.8))))
   }

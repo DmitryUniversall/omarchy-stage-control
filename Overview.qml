@@ -183,6 +183,25 @@ PanelWindow {
     function onKeysOutChanged() { if (!win.service.keysOut) win.keysLetGo = false }
   }
 
+  // The stage moves a frame at a time, as this window draws them (Service,
+  // "frames"): each frame tells the service it's starting, and while
+  // anything moves, asks for the next.
+  Connections {
+    target: win.service && win.service.frameDriven && win.drawn ? stage.Window.window : null
+    function onAfterAnimating() {
+      win.service.frameTick(win.screenName)
+      if (win.service.frameDriven) win.wantFrame()
+    }
+  }
+  Connections {
+    target: win.service
+    function onFramesWanted() { win.wantFrame() }
+  }
+  function wantFrame() {
+    var window = stage.Window.window
+    if (drawn && window) window.update()
+  }
+
   function smooth(edge0, edge1, x) {
     var t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)))
     return t * t * (3 - 2 * t)
@@ -234,7 +253,10 @@ PanelWindow {
 
   property var tileIds: []
   property var tileData: ({})
-  property var groups: []
+  // App groups ("Group windows by application"): their keys (window
+  // classes) in order, and by key where each is and its app's name and icon.
+  property var groupKeys: []
+  property var groupData: ({})
   property var placed: ({})
   property var windowsByAddress: ({})
   property var desktopIds: []
@@ -348,7 +370,8 @@ PanelWindow {
       slideFromDesktop = 0
       setModel("tileIds", [])
       setModel("tileData", {})
-      setModel("groups", [])
+      setModel("groupKeys", [])
+      setModel("groupData", {})
       setModel("placed", {})
       setModel("minimizedIds", [])
       rebuildDesktops()
@@ -530,6 +553,7 @@ PanelWindow {
     // The other desktops' windows wait off the screen's edges, a page
     // apart, laid out as they'd be on the stage, for a swipe to bring in
     // (see "swiping between desktops").
+    var held = false
     if (peeksReady && mission) {
       var order = service.desktopsFor(screenName).map(function(desktop) { return desktop.id })
       peekOrder = order
@@ -540,7 +564,13 @@ PanelWindow {
         if (page !== 0 && order[peekAt + page] !== undefined) sides[order[peekAt + page]] = page
       }
       peekDesktops = sides
-      for (var peekId in peekDesktops) {
+      // A window without a tile yet gets one a frame or so (peekMaker below),
+      // the nearest desktops' first: all made at once, the windows of every
+      // other desktop held the stage still for a few frames just after it
+      // opened. A swipe makes the rest at once (beginPeek).
+      var made = 0
+      var nearest = Object.keys(peekDesktops).sort(function(a, b) { return Math.abs(peekDesktops[a]) - Math.abs(peekDesktops[b]) })
+      nearest.forEach(function(peekId) {
         var peekPage = peekDesktops[peekId]
         var peekWindows = Model.desktopWindows(snap, monitor, Number(peekId))
         var peekResult = Layout.spread(peekWindows.map(function(w) {
@@ -550,6 +580,13 @@ PanelWindow {
         peekWindows.forEach(function(w, index) {
           var to = peekResult.windows[w.address]
           if (!to || data[w.address]) return
+          if (!tileItems[w.address] && !makeAllPeeks) {
+            if (made >= 1) {
+              held = true
+              return
+            }
+            made++
+          }
           var app = service.appFor(w.cls)
           var home = Model.monitorById(snap, w.monitor) || monitor
           data[w.address] = {
@@ -561,15 +598,20 @@ PanelWindow {
           }
           ids.push(w.address)
         })
-      }
+      })
     }
+    peeksHeld = held
 
     // Going to another desktop, its windows aren't laid out on the stage: no
     // app names under them. The desktop on screen's still are, as they leave.
-    setModel("groups", zoom && !zoom.here ? [] : result.groups.map(function(group) {
+    var groupList = zoom && !zoom.here ? [] : result.groups
+    var groupMap = {}
+    groupList.forEach(function(group) {
       var app = service.appFor(group.key)
-      return { key: group.key, x: group.x, y: group.y, w: group.w, h: group.h, icon: app.icon, name: app.name }
-    }))
+      groupMap[group.key] = { x: group.x, y: group.y, w: group.w, h: group.h, icon: app.icon, name: app.name }
+    })
+    setModel("groupData", groupMap)
+    setModel("groupKeys", groupList.map(function(group) { return group.key }))
     setModel("tileData", data)
     setModel("tileIds", ids)
     setModel("placed", rects)
@@ -668,6 +710,7 @@ PanelWindow {
     selectedAddress = ""
     groupSlideAnimation.stop()
     groupSlideX = direction * shift
+    groupSlideAnimation.from = groupSlideX
     groupSlideAnimation.duration = slideDuration
     groupSlideAnimation.start()
     slideEndTimer.interval = slideDuration + 60
@@ -751,12 +794,24 @@ PanelWindow {
       win.rebuild()
     }
   }
+  // Windows waiting for their tile (rebuild()), and making them all now.
+  property bool peeksHeld: false
+  property bool makeAllPeeks: false
+  Timer {
+    id: peekMaker
+    interval: 16
+    repeat: true
+    running: win.peeksHeld && win.settled && !win.moving
+    onTriggered: win.rebuild()
+  }
 
   function beginPeek() {
     if (!mission || !monitor || peekTarget !== 0 || peekAnimation.running || !slideAllowed()) return false
-    if (!peeksReady) {
+    if (!peeksReady || peeksHeld) {
       peeksReady = true
+      makeAllPeeks = true
       rebuild()
+      makeAllPeeks = false
     }
     if (peekOrder.indexOf(monitor.activeWorkspace) < 0) return false
     peeking = true
@@ -826,6 +881,7 @@ PanelWindow {
   function slideToPage(page) {
     peekTargetPage = page
     peekAnimation.stop()
+    peekAnimation.from = trackX
     peekAnimation.to = -page * pageShift
     peekAnimation.duration = Math.round(baseSlideDuration * Math.max(0.3, Math.min(1, Math.abs(trackX / pageShift + page))))
     peekAnimation.start()
@@ -889,16 +945,17 @@ PanelWindow {
     peekAnimation.stop()
     stopPeeking()
     peeksReady = false
+    peeksHeld = false
     peekDesktops = ({})
     trackX = 0
     peekPages = 0
   }
 
-  NumberAnimation {
+  FrameAnim {
     id: peekAnimation
+    service: win.service
     target: win
-    property: "trackX"
-    easing.type: Easing.OutCubic
+    propertyName: "trackX"
     onFinished: if (win.peeking) win.peekSettled()
   }
 
@@ -912,12 +969,12 @@ PanelWindow {
     }
   }
 
-  NumberAnimation {
+  FrameAnim {
     id: groupSlideAnimation
+    service: win.service
     target: win
-    property: "groupSlideX"
+    propertyName: "groupSlideX"
     to: 0
-    easing.type: Easing.OutCubic
   }
 
   Timer {
@@ -1628,14 +1685,57 @@ PanelWindow {
       }
 
       // App names under each group of windows ("Group windows by application").
+      // One label per app for as long as it has a group, which goes where
+      // the group's windows go: made anew for every new layout (the Spaces
+      // bar opening, a window closing), the labels jumped ahead of their
+      // windows to where those were going, and loaded their icons again.
       Repeater {
-        model: win.grouped ? win.groups : []
+        model: ScriptModel { values: win.grouped ? win.groupKeys : [] }
         delegate: Row {
-          required property var modelData
+          id: label
+          required property var modelData       // the app's window class
+          readonly property var group: win.groupData[modelData] || null
           transform: Translate { x: win.groupSlideX + win.trackX }
           spacing: 8
-          x: modelData.x + (modelData.w - width) / 2
-          y: modelData.y + modelData.h + 12
+          // Its group's place, on the way there from where it was the way
+          // the windows go (WindowTile.followPlace) while the stage stands
+          // open, else at once.
+          property var placeFrom: null
+          property var placeTo: null
+          property real placeT: 1
+          readonly property real placeE: 1 - Math.pow(1 - placeT, 3)
+          readonly property var place: !placeTo ? ({ x: 0, y: 0, w: 0, h: 0 })
+            : !placeFrom || placeT >= 1 ? placeTo
+            : { x: placeFrom.x + (placeTo.x - placeFrom.x) * placeE, y: placeFrom.y + (placeTo.y - placeFrom.y) * placeE,
+                w: placeFrom.w + (placeTo.w - placeFrom.w) * placeE, h: placeFrom.h + (placeTo.h - placeFrom.h) * placeE }
+          FrameAnim {
+            id: labelMove
+            service: win.service
+            target: label
+            propertyName: "placeT"
+            from: 0
+            to: 1
+            duration: 320
+            easing: Easing.Linear
+          }
+          function followGroup() {
+            if (!group) return
+            var to = { x: group.x, y: group.y, w: group.w, h: group.h }
+            if (placeTo && to.x === placeTo.x && to.y === placeTo.y && to.w === placeTo.w && to.h === placeTo.h) return
+            var animate = !!placeTo && !!win.service && win.service.revealed && !win.service.tracking && !win.service.closing && win.p > 0.99
+            placeFrom = animate ? place : null
+            placeTo = to
+            if (animate) {
+              labelMove.restart()
+            } else {
+              labelMove.stop()
+              placeT = 1
+            }
+          }
+          onGroupChanged: followGroup()
+          Component.onCompleted: followGroup()
+          x: place.x + (place.w - width) / 2
+          y: place.y + place.h + 12
           // A window of this app pointed at or picked shows its title under
           // it (WindowTile.titlePill), where this label is: the label gives
           // way, fading as the title comes.
@@ -1643,7 +1743,7 @@ PanelWindow {
             var shown = false
             ;[win.hoverAddress, win.selectedAddress].forEach(function(address) {
               var tile = address ? win.tileFor(address) : null
-              if (tile && tile.titleShown && tile.info && tile.info.cls === modelData.key) shown = true
+              if (tile && tile.titleShown && tile.info && tile.info.cls === label.modelData) shown = true
             })
             return shown
           }
@@ -1653,14 +1753,14 @@ PanelWindow {
           visible: opacity > 0.01
 
           IconImage {
-            source: modelData.icon
+            source: label.group ? label.group.icon : ""
             implicitSize: 30
             anchors.verticalCenter: parent.verticalCenter
             asynchronous: true
           }
           Text {
             anchors.verticalCenter: parent.verticalCenter
-            text: modelData.name
+            text: label.group ? label.group.name : ""
             textFormat: Text.PlainText
             color: "white"
             font.family: win.uiFont

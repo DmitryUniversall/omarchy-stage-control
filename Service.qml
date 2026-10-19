@@ -378,7 +378,9 @@ Item {
   // ---- Hyprland state ------------------------------------------------------------
 
   property var snap: null
+  property string snapJson: ""
   property var layers: ({})
+  property string layersJson: "{}"
   property var decor: ({ border: 0, bar: 0, rounding: 0, active: null, inactive: null })
   property var swipeConfig: Model.swipeFrom([])
   property int snapVersion: 0
@@ -452,10 +454,26 @@ Item {
           var parts = Model.splitJson(output)
           if (parts.length >= 3 && Array.isArray(parts[0]) && Array.isArray(parts[1]) && Array.isArray(parts[2])) {
             var rest = parts.slice(3)
-            root.layers = rest.length && rest[0] && !Array.isArray(rest[0]) && rest[0].option === undefined ? rest.shift() : ({})
-            root.decor = Model.decorFrom(rest)
-            root.swipeConfig = Model.swipeFrom(rest)
-            root.snap = Model.snapshot(parts[0], parts[1], parts[2])
+            // Each read makes new objects, and a binding that reads one is
+            // evaluated again when it's handed a new one, every tile's
+            // included: one that reads as before keeps the one it had.
+            // (snapVersion still counts every read.)
+            var layers = rest.length && rest[0] && !Array.isArray(rest[0]) && rest[0].option === undefined ? rest.shift() : ({})
+            var layersJson = JSON.stringify(layers)
+            if (layersJson !== root.layersJson) {
+              root.layersJson = layersJson
+              root.layers = layers
+            }
+            var decor = Model.decorFrom(rest)
+            if (JSON.stringify(decor) !== JSON.stringify(root.decor)) root.decor = decor
+            var swipe = Model.swipeFrom(rest)
+            if (JSON.stringify(swipe) !== JSON.stringify(root.swipeConfig)) root.swipeConfig = swipe
+            var snap = Model.snapshot(parts[0], parts[1], parts[2])
+            var snapJson = JSON.stringify(snap)
+            if (snapJson !== root.snapJson) {
+              root.snapJson = snapJson
+              root.snap = snap
+            }
             root.snapVersion++
             if (root.shown) root.readWindowLooks()
             root.lastGoodRead = read
@@ -1075,7 +1093,6 @@ Item {
   // ready, then the opening animation starts (or the fingers take over).
   function startMode(which, byGesture, forcedClass) {
     stillTimer.stop()
-    progressAnim.stop()
     stopBarDrop()
     animating = false
     closing = false
@@ -1300,13 +1317,13 @@ Item {
     return !!settings && settings.keepBar === false && !settings.reduceMotion && settings.barReturn === "after"
   }
 
-  NumberAnimation {
+  FrameAnim {
     id: barDropAnim
+    service: root
     target: root
-    property: "barDrop"
+    propertyName: "barDrop"
     from: 0
     to: 1
-    easing.type: Easing.OutCubic
     onFinished: if (root.closing && root.progress <= 0.001) root.finishCloseWhenStill()
   }
 
@@ -1337,7 +1354,6 @@ Item {
     keysOutAt = 0
     endHandover()
     deskOverview = null
-    progressAnim.stop()
     animating = false
     openSerial++
     mode = ""
@@ -1349,23 +1365,19 @@ Item {
     progress = 0
   }
 
-  NumberAnimation {
-    id: progressAnim
-    target: root
-    property: "progress"
-    onFinished: {
-      root.animating = false
-      if (root.closing && root.progress <= 0.001) root.closeArrived()
-    }
-  }
-  // Opening or closing on its own (not following the fingers). A flag rather
-  // than the animation's `running`, which turns false for a moment whenever
-  // animateTo() restarts it (closing on the way in, say) and would wake every
-  // paused preview at once.
+  // Opening or closing on its own (not following the fingers), a frame at a
+  // time (see "frames" below). It stays true when animateTo() turns it
+  // around (closing on the way in, say), which would otherwise wake every
+  // paused preview for a moment.
   property bool animating: false
+  property real animFrom: 0
+  property real animTo: 0
+  property real animDuration: 1
+  property bool animEased: true       // OutCubic; InOutQuad with reduced motion
+  property real animStart: 0          // Date.now() when it started
+  property real animAt: 0             // ms into it, as of the last frame
 
   function animateTo(target, velocity) {
-    progressAnim.stop()
     var reduce = settings && settings.reduceMotion
     var distance = Math.abs(target - progress)
     if (distance < 0.001) {
@@ -1379,12 +1391,121 @@ Item {
     var duration = base * Math.max(0.35, distance) / speedFactor
     // A quick flick finishes quicker.
     if (velocity) duration = Math.min(duration, Math.max(140, distance / Math.max(0.0001, Math.abs(velocity)) * 1.6))
-    progressAnim.from = progress
-    progressAnim.to = target
-    progressAnim.duration = Math.round(duration)
-    progressAnim.easing.type = reduce ? Easing.InOutQuad : Easing.OutCubic
+    animFrom = progress
+    animTo = target
+    animDuration = Math.max(1, Math.round(duration))
+    animEased = !reduce
+    animStart = Date.now()
+    animAt = 0
     animating = true
-    progressAnim.start()
+    framesWanted()
+  }
+
+  // ---- frames ----------------------------------------------------------------------
+  //
+  // The stage moves once per frame it draws: Overview calls frameTick() as
+  // each of its frames begins, and every animation goes on by one frame of
+  // the display's refresh (opening and closing here, the rest as FrameAnims),
+  // and a swipe to where the fingers were a moment ago (Gesture.js). Qt's
+  // own animations used to drive them, and with more than one of the
+  // shell's windows up (the top bar, the stage) Qt steps those on a timer
+  // of its own, 8 ms apart against the display's 8.33: every 25th frame or
+  // so the stage moved two steps at once, or none, and on the first frames
+  // of an opening, held up by the stage getting ready, Qt fell back to the
+  // clock and moved it by uneven steps. A frame that comes late doesn't make
+  // the next one jump: the animation goes on from where it was, a little
+  // behind the clock, as Qt's own animation driver does. Only frames late
+  // three times in a row (a stage that can't keep up) go by the clock.
+
+  signal framesWanted()
+  readonly property bool frameDriven: animating || (tracking && (swipeIntent === "open" || swipeIntent === "close"))
+    || !!deskOverview || frameAnimCount > 0
+  onFrameDrivenChanged: {
+    if (!frameDriven) return
+    lastFrameAt = Date.now()
+    lateFrames = 0
+    framesWanted()
+  }
+  // The display whose frames time it (the first to draw one), and when
+  // the last one came.
+  property string clockScreen: ""
+  property real lastFrameAt: 0
+  // Frames that came late (by half a frame or more) one after another.
+  property int lateFrames: 0
+
+  // The stage's other movements (desktops sliding, windows flying, the
+  // Spaces bar opening), each a FrameAnim, running now.
+  property var frameAnims: []
+  property int frameAnimCount: 0
+  function addFrameAnim(anim) {
+    if (frameAnims.indexOf(anim) < 0) frameAnims.push(anim)
+    frameAnimCount = frameAnims.length
+    framesWanted()
+  }
+  function removeFrameAnim(anim) {
+    var i = frameAnims.indexOf(anim)
+    if (i >= 0) frameAnims.splice(i, 1)
+    frameAnimCount = frameAnims.length
+  }
+
+  function frameTick(screenName) {
+    if (!frameDriven) return
+    var now = Date.now()
+    if (screenName !== clockScreen) {
+      // Another display's frames, unless the clock's have stopped coming.
+      if (clockScreen !== "" && now - lastFrameAt < 50) return
+      clockScreen = screenName
+    }
+    var overview = overviews[screenName]
+    var rate = overview && overview.monitor ? overview.monitor.refreshRate : 0
+    var frameMs = 1000 / (rate > 0 ? rate : 60)
+    lateFrames = now - lastFrameAt > 1.5 * frameMs ? lateFrames + 1 : 0
+    var step = lateFrames >= 3 ? Math.min(now - lastFrameAt, 4 * frameMs) : frameMs
+    lastFrameAt = now
+    stepFrames(now, step, frameMs)
+  }
+
+  // Everything that moves, `step` ms on (a frame's time, or the clock's).
+  function stepFrames(now, step, frameMs) {
+    if (animating) {
+      // Never well ahead of the clock (frames coming faster than the
+      // display's rate says).
+      animAt = Math.max(animAt, Math.min(animAt + step, now - animStart + 2 * frameMs))
+      var t = Math.min(1, animAt / animDuration)
+      var eased = animEased ? 1 - Math.pow(1 - t, 3) : t < 0.5 ? 2 * t * t : 1 - Math.pow(2 - 2 * t, 2) / 2
+      progress = animFrom + (animTo - animFrom) * eased
+      if (t >= 1) {
+        animating = false
+        if (closing && progress <= 0.001) closeArrived()
+      }
+    }
+    if (tracking && (swipeIntent === "open" || swipeIntent === "close"))
+      progress = trackedProgress(fingersProgress(swipeOrigin))
+    if (deskOverview)
+      deskOverview.peekTo(Gesture.shownTravel(deskTrail, now) / swipeConfig.distance)
+    if (frameAnimCount > 0) {
+      var anims = frameAnims.slice()
+      for (var i = 0; i < anims.length; i++) {
+        // One whose item went away without stopping it goes too.
+        if (anims[i] && typeof anims[i].advance === "function") anims[i].advance(now, step, frameMs)
+        else removeFrameAnim(anims[i])
+      }
+    }
+  }
+
+  // A stage that draws no frames (none showing): it goes on by the clock.
+  Timer {
+    interval: 25
+    repeat: true
+    running: root.frameDriven
+    onTriggered: {
+      var now = Date.now()
+      if (now - root.lastFrameAt < 50) return
+      var step = now - root.lastFrameAt
+      root.lastFrameAt = now
+      root.clockScreen = ""
+      root.stepFrames(now, step, step)
+    }
   }
 
   // ---- trackpad ----------------------------------------------------------------------
@@ -1456,12 +1577,6 @@ Item {
     return Math.max(0, Math.min(1, origin + travel * swipeDirection / swipeDistance))
   }
 
-  // Following the fingers: the stage moves once a frame, not at each event.
-  FrameAnimation {
-    running: root.tracking && (root.swipeIntent === "open" || root.swipeIntent === "close")
-    onTriggered: root.progress = root.trackedProgress(root.fingersProgress(root.swipeOrigin))
-  }
-
   // A swipe's stage can only show once it's ready (`revealed`), and by then
   // the fingers have gone some way (`followFrom`, in the same 0 to 1). It
   // shows where it was hidden, at the desktop, and from there follows the
@@ -1508,7 +1623,6 @@ Item {
   }
 
   function beginTracking(which, direction, intent) {
-    progressAnim.stop()
     stopBarDrop()
     animating = false
     followFrom = 0
@@ -1598,15 +1712,6 @@ Item {
     deskTravel += (swipeConfig.invert ? -1 : 1) * event.dx
     deskSteps++
     deskTrail = Gesture.extendTrail(deskTrail, event.time, Date.now(), deskTravel)
-  }
-
-  // Once a frame, like the stage's own swipe (Gesture.js).
-  FrameAnimation {
-    running: !!root.deskOverview
-    onTriggered: {
-      if (!root.deskOverview) return
-      root.deskOverview.peekTo(Gesture.shownTravel(root.deskTrail, Date.now()) / root.swipeConfig.distance)
-    }
   }
 
   function deskSwipeFinish(event) {

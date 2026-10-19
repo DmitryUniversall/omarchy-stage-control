@@ -6,27 +6,33 @@
 // windows to spread out, and the plans (lists of moves) for adding, removing
 // and reordering desktops. Pure functions; tests/model.test.cjs.
 
-// hyprctl --batch prints its JSON answers back to back; split them apart.
+// hyprctl --batch prints its JSON answers back to back (and plain text for
+// an option it doesn't know); split them apart. It goes from bracket to
+// bracket and over whole strings with a search rather than a character at a
+// time, which in the shell's JavaScript took twice as long.
 function splitJson(text) {
   var out = []
   var value = String(text || "")
-  var depth = 0, start = -1, inString = false, escaped = false
-  for (var i = 0; i < value.length; i++) {
-    var c = value.charAt(i)
-    if (inString) {
-      if (escaped) escaped = false
-      else if (c === "\\") escaped = true
-      else if (c === "\"") inString = false
-      continue
-    }
-    if (c === "\"") { inString = true; continue }
-    if (c === "[" || c === "{") {
-      if (depth === 0) start = i
+  var depth = 0, start = -1
+  var next = /[\[\]{}"]/g
+  var quote = /["\\]/g
+  var found
+  while ((found = next.exec(value)) !== null) {
+    var c = found[0]
+    if (c === "\"") {
+      // To the closing quote, over escaped characters.
+      quote.lastIndex = found.index + 1
+      var end
+      while ((end = quote.exec(value)) !== null && end[0] === "\\") quote.lastIndex = end.index + 2
+      if (end === null) break
+      next.lastIndex = end.index + 1
+    } else if (c === "[" || c === "{") {
+      if (depth === 0) start = found.index
       depth++
-    } else if (c === "]" || c === "}") {
+    } else {
       depth--
       if (depth === 0 && start >= 0) {
-        out.push(JSON.parse(value.slice(start, i + 1)))
+        out.push(JSON.parse(value.slice(start, found.index + 1)))
         start = -1
       }
       if (depth < 0) throw new Error("unbalanced JSON")
@@ -66,6 +72,8 @@ function snapshot(clients, monitors, workspaces) {
       x: int(m.x, 0), y: int(m.y, 0),
       w: width, h: height,
       scale: scale,
+      // Frames a second; the stage's animations step a frame at a time.
+      refreshRate: Number(m.refreshRate) > 0 ? Number(m.refreshRate) : 60,
       focused: m.focused === true,
       activeWorkspace: m.activeWorkspace ? int(m.activeWorkspace.id, 0) : 0,
       specialWorkspace: m.specialWorkspace ? int(m.specialWorkspace.id, 0) : 0,

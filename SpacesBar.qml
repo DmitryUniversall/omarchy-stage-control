@@ -55,10 +55,36 @@ Item {
   property bool heldExpanded: false
   onWantsExpandedChanged: if (!frozen) heldExpanded = wantsExpanded
   onFrozenChanged: if (!frozen) heldExpanded = wantsExpanded
-  Component.onCompleted: heldExpanded = wantsExpanded
+  Component.onCompleted: {
+    heldExpanded = wantsExpanded
+    expand = expanded ? 1 : 0
+  }
   readonly property bool expanded: frozen ? heldExpanded : wantsExpanded
-  property real expand: expanded ? 1 : 0
-  Behavior on expand { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
+  // How far it's open, on its way a frame at a time (FrameAnim). Not
+  // while the stage is closed: nothing shows it, and it went on drawing
+  // the bar folding up after the stage was gone.
+  property real expand: 0
+  onExpandedChanged: followExpanded()
+  FrameAnim {
+    id: expandAnimation
+    service: bar.service
+    target: bar
+    propertyName: "expand"
+    duration: 280
+  }
+  function followExpanded() {
+    var to = expanded ? 1 : 0
+    if (!overview || !overview.showsHere) {
+      expandAnimation.stop()
+      expand = to
+      return
+    }
+    if (expandAnimation.running && expandAnimation.to === to) return
+    expandAnimation.stop()
+    expandAnimation.from = expand
+    expandAnimation.to = to
+    expandAnimation.start()
+  }
 
   // The space the spread must leave free (the target, not the animation).
   readonly property real reservedHeight: expanded ? expandedHeight : collapsedHeight
@@ -223,10 +249,11 @@ Item {
   // Each desktop's thumbnail starts a capture of every window on it. Once the
   // stage has opened they start one desktop a frame, the one on screen first
   // and then outward, rather than all on the frame the stage settles.
-  // Pointing at the bar starts any that are left at once. With
-  // previewsWhileOpening they take their turns from the stage's first frame
-  // on screen instead, so the desktops fill in while it opens, at the cost of
-  // those captures on the frames of the opening.
+  // Pointing at the bar folded into names ("auto") starts their turns at
+  // once, opening or not. With previewsWhileOpening they take their turns
+  // from the stage's first frame on screen instead, so the desktops fill in
+  // while it opens, at the cost of those captures on the frames of the
+  // opening.
 
   readonly property var previewOrder: {
     var ids = overview ? overview.desktopIds : []
@@ -249,7 +276,8 @@ Item {
   // also true while App Exposé is open on another display.
   FrameAnimation {
     running: !!bar.overview && bar.overview.showsHere && bar.overview.mission && bar.previewTurns < bar.count
-      && (bar.overview.settled || (bar.settings.previewsWhileOpening === true && !!bar.service && bar.service.revealed))
+      && (bar.overview.settled || (bar.mode === "auto" && bar.expand > 0.01)
+        || (bar.settings.previewsWhileOpening === true && !!bar.service && bar.service.revealed))
     onTriggered: bar.previewTurns++
   }
 
