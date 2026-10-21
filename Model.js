@@ -349,6 +349,18 @@ function swipeFrom(parts) {
   return swipe
 }
 
+// Whether Hyprland hides an open special workspace (the scratchpad, Super+S)
+// when its display goes to another desktop (binds:hide_special_on_workspace_change
+// in the same batch; on in Omarchy, off in Hyprland's defaults).
+function hidesSpecialOnSwitch(parts) {
+  var hides = false
+  ;(parts || []).forEach(function(part) {
+    if (!part || typeof part !== "object" || Array.isArray(part)) return
+    if (part.option === "binds:hide_special_on_workspace_change") hides = part.bool === true || part.int === 1
+  })
+  return hides
+}
+
 function monitorByName(snap, name) {
   for (var i = 0; i < snap.monitors.length; i++) if (snap.monitors[i].name === name) return snap.monitors[i]
   return null
@@ -792,6 +804,22 @@ function hiddenDesktopOf(snap, address) {
   if (!w || w.hidden || w.pinned || w.special) return 0
   var monitor = monitorById(snap, w.monitor)
   return monitor && w.workspace !== monitor.activeWorkspace && w.workspace !== monitor.specialWorkspace ? w.workspace : 0
+}
+
+// Whether Hyprland itself hides the special workspace open on `monitor` (the
+// scratchpad, Super+S) as the stage closes: going to another desktop
+// `desktop` there, when it hides it on a switch (`hidesOnSwitch`,
+// hidesSpecialOnSwitch), or giving the keys to window `address` of that
+// display, not on it. False with none open.
+function specialHidesOnClose(snap, monitor, address, desktop, hidesOnSwitch) {
+  if (!snap || !monitor || !monitor.specialWorkspace) return false
+  if (hidesOnSwitch === true && monitor.focused && typeof desktop === "number" && desktop > 0 && desktop !== monitor.activeWorkspace) return true
+  if (!isAddress(address)) return false
+  for (var i = 0; i < snap.windows.length; i++) {
+    var w = snap.windows[i]
+    if (w.address === address) return w.monitor === monitor.id && w.workspace !== monitor.specialWorkspace
+  }
+  return false
 }
 
 // ---- which app a window belongs to ---------------------------------------------

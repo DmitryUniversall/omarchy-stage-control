@@ -383,6 +383,9 @@ Item {
   property string layersJson: "{}"
   property var decor: ({ border: 0, bar: 0, rounding: 0, active: null, inactive: null })
   property var swipeConfig: Model.swipeFrom([])
+  // Hyprland hides an open special workspace (the scratchpad) when the
+  // display goes to another desktop (Model.hidesSpecialOnSwitch).
+  property bool hideSpecialOnSwitch: false
   property int snapVersion: 0
   property var snapWaiters: []
   property var laterWaiters: []
@@ -422,7 +425,7 @@ Item {
       + "getoption general:col.active_border; getoption general:col.inactive_border; "
       + "getoption gestures:workspace_swipe_distance; getoption gestures:workspace_swipe_invert; "
       + "getoption gestures:workspace_swipe_cancel_ratio; getoption gestures:workspace_swipe_min_speed_to_force; "
-      + "getoption gestures:workspace_swipe_forever"])
+      + "getoption gestures:workspace_swipe_forever; getoption binds:hide_special_on_workspace_change"])
     if (started) runningRead = ++readsStarted
     else snapPending = true
     if (hasCallback) {
@@ -468,6 +471,7 @@ Item {
             if (JSON.stringify(decor) !== JSON.stringify(root.decor)) root.decor = decor
             var swipe = Model.swipeFrom(rest)
             if (JSON.stringify(swipe) !== JSON.stringify(root.swipeConfig)) root.swipeConfig = swipe
+            root.hideSpecialOnSwitch = Model.hidesSpecialOnSwitch(rest)
             var snap = Model.snapshot(parts[0], parts[1], parts[2])
             var snapJson = JSON.stringify(snap)
             if (snapJson !== root.snapJson) {
@@ -539,6 +543,15 @@ Item {
         if (name === "workspacev2" && root.handingKeys && !handoverTimer.running) root.endHandover()
         followTimer.stop()
         root.refresh(null)
+      } else if (name === "activespecialv2") {
+        if (!root.closing) {
+          followTimer.restart()
+          return
+        }
+        // Read at once: its windows leave the closing stage (Overview.rebuild()).
+        root.specialChangedWhileClosing(String(event.data || ""))
+        followTimer.stop()
+        if (root.closing) root.refresh(null)
       } else if (root.followedEvents.indexOf(name) >= 0) {
         followTimer.restart()
       }
@@ -1097,6 +1110,8 @@ Item {
     animating = false
     closing = false
     exitAddress = ""
+    specialToggled = false
+    specialHidesItself = false
     var serial = ++openSerial
     refreshWallpaper()
     refresh(function(ok) {
@@ -1181,6 +1196,10 @@ Item {
       && barReturnsAfter() ? 0 : 1
     closing = true
     exitAddress = Model.isAddress(options.address) ? options.address : ""
+    // Going to another desktop, or to a window not on it, Hyprland hides an
+    // open special workspace itself (specialChangedWhileClosing).
+    specialHidesItself = !!snap && Model.specialHidesOnClose(snap, Model.focusedMonitor(snap), exitAddress,
+      validId(options.desktop) ? options.desktop : 0, hideSpecialOnSwitch)
     // Closing gives the keys back (Overview), and Hyprland hands them to the
     // window that last had them, going to its desktop if need be. A window
     // or desktop to go to is asked for once that's done, so Hyprland's
@@ -1232,7 +1251,10 @@ Item {
       var here = screen ? Model.visibleWindows(snap, screen).filter(function(w) {
         return w.workspace === desktop && w.address !== away
       }) : []
-      if (here.length) focusWindow(here[0].address)
+      if (here.length) {
+        if (screen && Model.specialHidesOnClose(snap, screen, here[0].address, 0, false)) specialHidesItself = true
+        focusWindow(here[0].address)
+      }
     }
     checkingHome = true
     refresh(function(ok) {
@@ -1282,8 +1304,15 @@ Item {
       whenPlansDone(function() { if (root.closing && root.progress <= 0.001) root.finishCloseWhenStill() })
       return
     }
-    // Nor before it knows Hyprland stayed (stayOn), which asks again.
-    if (checkingHome) return
+    // Nor before it knows Hyprland stayed (stayOn), which asks again. With a
+    // special workspace shown or hidden on the way, at once
+    // (specialChangedWhileClosing), unless the window that last had the keys
+    // has left (keysGently): Hyprland may have gone after it.
+    if (checkingHome && (!specialToggled || keysGently)) return
+    if (specialToggled) {
+      finishClose()
+      return
+    }
     var slideMs = workspaceAnimationMs === null ? 500 : workspaceAnimationMs
     var borderMs = borderAnimationMs === null ? 300 : borderAnimationMs
     var now = Date.now()
@@ -1305,6 +1334,27 @@ Item {
   }
   // Meanwhile the pointer already reaches the windows (Overview.mask).
   readonly property bool holdingStill: stillTimer.running || barDropAnim.running
+
+  // A special workspace (the scratchpad, Super+S) shown or hidden while the
+  // stage closes slid in or out under it, which kept the screen as it had
+  // closed on, waiting for Hyprland (finishCloseWhenStill): it appeared or
+  // went all at once as the stage did, or jumped from halfway. Then the
+  // stage goes at once, and Hyprland's slide shows: right away while it
+  // waits, else as soon as it has closed. Hyprland hides an open one itself
+  // as the stage goes to another desktop or gives the keys to a window not
+  // on it (specialHidesItself): that one is part of the closing.
+  property bool specialToggled: false
+  property bool specialHidesItself: false
+
+  // `data`: activespecialv2's "id,name,display", the id empty once hidden.
+  function specialChangedWhileClosing(data) {
+    var parts = data.split(",")
+    var shows = (Number(parts[0]) || 0) !== 0
+    var screen = snap ? Model.focusedMonitor(snap) : null
+    if (!shows && specialHidesItself && (!screen || parts[2] === screen.name)) return
+    specialToggled = true
+    if (holdingStill || (checkingHome && !animating && progress <= 0.001)) finishCloseWhenStill()
+  }
 
   // Going to a desktop picked in the Spaces bar with the stage over the top
   // bar, the bar can come back once the desktop has opened (the barReturn
@@ -1347,6 +1397,8 @@ Item {
   function finishClose() {
     stillTimer.stop()
     checkingHome = false
+    specialToggled = false
+    specialHidesItself = false
     keysGently = false
     keysAwayFrom = ""
     stopBarDrop()

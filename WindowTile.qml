@@ -317,7 +317,7 @@ Item {
   // thumbnail (info.overCard), above it too.
   z: dragging || dropping ? 2000 : info && (info.zoom || info.overCard) ? 1500 + info.z : exiting ? 900 : lit ? 500 : (info ? info.z : 0)
   opacity: (dropping && dropFades ? 1 - dropT * 0.85 : onScreen ? 1 : smooth(0.15, 0.85, p)) * closeFade
-    * (zooms && overview ? overview.zoomShown : 1) * (stays ? 1 - smooth(0.05, 0.45, e) : 1)
+    * (zooms && overview ? overview.zoomShown : 1) * (stays ? 1 - smooth(0.05, 0.45, e) : 1) * vanishFade
   visible: !!info
 
   // Hover lift, like macOS.
@@ -447,8 +447,10 @@ Item {
   // in the middle of the move, a new texture of several megabytes that held
   // that frame up; now that happens once it's there (or, growing, as it
   // sets off).
+  // Opening from the thumbnail of the desktop on screen, at least at the size
+  // its picture on the stage shows at (echo).
   readonly property real renderWidth: layoutAnimation.running && layoutFrom
-    ? Math.max(width, layoutFrom.w, layoutTo.w) : width
+    ? Math.max(width, layoutFrom.w, layoutTo.w) : echo ? Math.max(width, echo.w) : width
   readonly property real renderScale: {
     var s = info ? renderWidth / Math.max(1, info.size.w) : 1
     if (!(s < 1)) return 1
@@ -517,6 +519,7 @@ Item {
   // the stage showed.) The pane is Glass's shader with nothing but its
   // sampling and rounded corners.
   ShaderEffect {
+    id: pane
     anchors.fill: frame
     visible: !!backdrop
     // Hyprland draws it at the window's opacity, unless blur:ignore_opacity.
@@ -589,6 +592,81 @@ Item {
       // picture in their new size, the rest of it blank.
       live: !!tile.overview && tile.overview.showsHere && !(tile.service && tile.service.animating) && !tile.overview.moving
         && !tile.peek && !(tile.stays && tile.opacity < 0.01) && !tile.heldByShow
+    }
+  }
+
+  // Going to the desktop on screen from its thumbnail (Overview.closeOnDesktop),
+  // the window opens with it from the thumbnail, and its picture stays where
+  // it was on the stage and fades, as the windows of a desktop left do: its
+  // shadow, what shows through it, the preview as the stage last rendered it
+  // (frame's content, not rendered again for the thumbnail, renderWidth), and
+  // its app icon. Under the desktop opening, on the stage itself.
+  readonly property var echo: info && info.echo ? info.echo : null
+  Item {
+    id: echoView
+    parent: tile.overview ? tile.overview.stage : tile
+    x: tile.echo ? tile.echo.x : 0
+    y: tile.echo ? tile.echo.y : 0
+    width: tile.echo ? tile.echo.w : 0
+    height: tile.echo ? tile.echo.h : 0
+    z: tile.info ? tile.info.z : 0
+    opacity: tile.smooth(0.15, 0.85, tile.p)
+    visible: !!tile.echo && !!tile.overview && tile.overview.showsHere && opacity > 0.01
+    readonly property real radius: tile.lerp(tile.restRadius, 10, tile.smooth(0, 0.5, tile.e))
+
+    RectangularShadow {
+      anchors.fill: parent
+      radius: echoView.radius
+      offset: Qt.vector2d(0, 12 * tile.e)
+      blur: 34 * tile.e
+      spread: -4
+      color: Qt.rgba(0, 0, 0, 0.5 * tile.e)
+      visible: tile.e > 0.02
+    }
+
+    ShaderEffect {
+      anchors.fill: parent
+      visible: pane.visible
+      opacity: pane.opacity
+      property var backdrop: pane.backdrop
+      property size itemSize: Qt.size(width, height)
+      property real radius: echoView.radius
+      property real bevel: pane.bevel
+      property real refraction: 0
+      property real frost: 0
+      property real rim: 0
+      property real flip: 0
+      property real windowSpace: 0
+      property vector4d area: pane.area
+      property vector4d tint: pane.tint
+      property vector4d fill: pane.fill
+      fragmentShader: pane.fragmentShader
+    }
+
+    ShaderEffect {
+      anchors.fill: parent
+      opacity: tile.windowAlpha
+      property var source: frame.contentLayer
+      property size rectSize: Qt.size(width * tile.dpr, height * tile.dpr)
+      property real radius: echoView.radius * tile.dpr
+      property vector4d background: Qt.vector4d(0, 0, 0, 0)
+      fragmentShader: Qt.resolvedUrl("shaders/rounded.frag.qsb")
+    }
+
+    // At the size the stage's own icon had, so it's the one already loaded.
+    Image {
+      readonly property bool wanted: !!tile.overview && tile.overview.showIcons && !tile.overview.grouped && !!tile.info && tile.info.icon !== ""
+      readonly property real size: Math.round(Math.max(26, Math.min(44, echoView.width * 0.11)))
+      source: wanted && echoView.visible ? tile.info.icon : ""
+      sourceSize: Qt.size(size, size)
+      width: size
+      height: size
+      fillMode: Image.PreserveAspectFit
+      anchors.horizontalCenter: parent.horizontalCenter
+      anchors.verticalCenter: parent.bottom
+      opacity: tile.smooth(0.55, 1, tile.p)
+      visible: wanted && opacity > 0.01
+      asynchronous: true
     }
   }
 
@@ -742,6 +820,29 @@ Item {
   function markClosing() {
     closingOut = true
     closeTimeout.restart()
+  }
+
+  // A special workspace's window (the scratchpad's) that Hyprland hid with
+  // the stage on its way out (Overview.rebuild()) fades on its way, quickly.
+  readonly property bool vanishing: !!info && info.vanish === true
+  property real vanishFade: 1
+  onVanishingChanged: {
+    vanishAnimation.stop()
+    if (!vanishing) {
+      vanishFade = 1
+      return
+    }
+    vanishAnimation.from = vanishFade
+    vanishAnimation.start()
+  }
+  FrameAnim {
+    id: vanishAnimation
+    service: tile.service
+    target: tile
+    propertyName: "vanishFade"
+    to: 0
+    duration: 160
+    easing: Easing.Linear
   }
 
   Timer {

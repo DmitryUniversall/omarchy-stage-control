@@ -397,6 +397,25 @@ PanelWindow {
     var zoom = mission && service.closing && !!zoomInto ? zoomInto : null
     var windows = expose ? Model.appWindows(snap, service.exposeClass)
       : Model.visibleWindows(snap, monitor, zoom ? zoom.desktop : undefined)
+    // An open special workspace (the scratchpad, Super+S) that Hyprland
+    // hides itself as the stage closes (Model.specialHidesOnClose): going to
+    // another desktop, or giving the keys to a window not on it. Its windows
+    // aren't on the screen the stage closes on, so they fade where they are
+    // on the stage (below), as the windows of a desktop left do. Opened
+    // into the other desktop, they vanished the moment the stage was gone;
+    // flying back to their places, the moment a read of Hyprland's state no
+    // longer had them. One shown on the way (Super+S) isn't put on the
+    // stage either: it popped up halfway there. The stage goes as soon as it
+    // has closed, and Hyprland's slide shows (Service.specialChangedWhileClosing).
+    var special = monitor.specialWorkspace
+    if (mission && service.closing && special !== 0) {
+      var specialGoes = Model.specialHidesOnClose(snap, monitor, service.exitAddress,
+        zoom && !zoom.here ? zoom.desktop : 0, service.hideSpecialOnSwitch)
+      windows = windows.filter(function(w) {
+        var was = tileData[w.address]
+        return w.workspace !== special || (!specialGoes && !!was && was.onScreen)
+      })
+    }
     // The window with the keys once the stage is gone: going to a desktop,
     // the one used there last, as Hyprland gives them to it.
     var focused = zoom ? (windows.length ? windows[0] : null) : Model.activeWindow(snap)
@@ -431,9 +450,18 @@ PanelWindow {
     var data = {}
     var ids = []
     var rects = {}
+    // Closing, a window flies from where it was on the stage. A read of
+    // Hyprland's state on the way (a special workspace hidden, a window
+    // gone) laid the others out anew, and they jumped to the new layout.
+    var kept = {}
     windows.forEach(function(w, index) {
       var to = result.windows[w.address]
       if (!to) return
+      var was = !zoom && service.closing ? tileData[w.address] : null
+      if (was && was.onScreen && !was.peek && !was.leaving && !was.minimized) {
+        to = was.to
+        kept[w.address] = was
+      }
       // On screen once the stage is gone (going to a desktop: on that one).
       var shown = zoom ? zoom.desktop : monitor.activeWorkspace
       var onScreen = w.monitor === monitor.id && (w.pinned || w.workspace === shown
@@ -441,10 +469,12 @@ PanelWindow {
       var from = onScreen ? Model.localRect(w, monitor)
         : { x: to.x + to.w * 0.04, y: to.y + to.h * 0.04 + 30, w: to.w * 0.92, h: to.h * 0.92 }
       // Opening from its desktop's thumbnail: where it is in the thumbnail.
-      // The desktop on screen opens from its thumbnail with its windows
-      // going back to their places from the stage, over it (overCard): in
-      // the thumbnail, they'd have jumped there at the click.
-      var zooms = !!zoom && onScreen && !zoom.here
+      // The desktop on screen's own windows too, as another desktop's: a
+      // picture of each stays where it was on the stage and fades
+      // (WindowTile's echo), as the windows of a desktop left do. One the
+      // thumbnail doesn't show (the special workspace's, the scratchpad's)
+      // goes back to its place from the stage, over it (overCard).
+      var zooms = !!zoom && onScreen && (!zoom.here || w.workspace === zoom.desktop)
       if (zooms) to = Layout.inThumbnail(from, width, zoom.rect)
       var app = service.appFor(w.cls)
       var home = Model.monitorById(snap, w.monitor) || monitor
@@ -455,7 +485,9 @@ PanelWindow {
         // what shows through it is taken from there (WindowTile).
         place: Model.localRect(w, home),
         workspace: w.workspace, z: (w.floating ? 200 : 0) + (windows.length - index), zoom: zooms,
-        overCard: !!zoom && zoom.here === true && onScreen,
+        overCard: !!zoom && zoom.here === true && onScreen && !zooms,
+        // Where its picture stays on the stage meanwhile (WindowTile's echo).
+        echo: zooms && zoom.here === true && zoom.echoes ? (zoom.echoes[w.address] || null) : null,
         fullscreen: w.fullscreen
       }
       ids.push(w.address)
@@ -512,6 +544,9 @@ PanelWindow {
         var above = data[other]
         return other !== address && above.onScreen && above.z > info.z && intersects(mine, decorated(above.from))
       })
+      // As the screen was captured, also when a window over it has left
+      // since (kept, above): in the capture it still covers it.
+      if (kept[address] && kept[address].ghost === false) info.ghost = false
     })
 
     // The desktop on screen changed while the stage is open: slide to it.
@@ -541,12 +576,24 @@ PanelWindow {
       ids.push(leavingAddress)
     }
     // As a desktop's thumbnail opens into the screen, the windows of the
-    // desktop left stay where they were on the stage and fade.
-    if (zoom) {
+    // desktop left stay where they were on the stage and fade. Closing, so
+    // do those of a special workspace that Hyprland hides on the way
+    // (above), also once a read of its state no longer has them. (They
+    // vanished halfway.) One that goes once the stage is on its way (Super+S
+    // as it closes) goes on, fading quickly (WindowTile.vanishing): faded as
+    // the stage closes, it was halfway gone already.
+    if (zoom || (mission && service.closing)) {
       for (var fadingAddress in tileData) {
         var was = tileData[fadingAddress]
         if (data[fadingAddress] || was.minimized || was.peek || !(was.onScreen || was.zoomFade)) continue
-        data[fadingAddress] = Object.assign({}, was, { from: was.to, onScreen: false, leaving: true, zoomFade: true, zoom: false })
+        if (!zoom && !(was.workspace < 0)) continue
+        if (!was.zoomFade && !was.vanish) {
+          var item = tileItems[fadingAddress]
+          var at = item ? { x: item.x, y: item.y, w: item.width, h: item.height } : was.to
+          was = Object.assign({}, was, service.progress < 0.999 ? { vanish: true, leaving: true }
+            : { from: at, to: at, onScreen: false, leaving: true, zoomFade: true, zoom: false, overCard: false, echo: null })
+        }
+        data[fadingAddress] = was
         ids.push(fadingAddress)
       }
     }
@@ -1112,16 +1159,30 @@ PanelWindow {
   function closeOnDesktop(id) {
     var thumb = spacesBar.thumbs[id]
     var rect = !thumb ? null : spacesBar.expand > 0.5 ? thumb.pictureRect() : thumb.nameRect(stageWidth / Math.max(1, stageHeight))
-    // The desktop on screen opens from its thumbnail too, its windows going
-    // back to their places over it from the stage (rebuild()).
+    // The desktop on screen opens from its thumbnail too, with its windows
+    // (rebuild()).
     var here = !!monitor && id === monitor.activeWorkspace
     if (!rect && here) {
       service.close({})
       return
     }
+    // Its windows leave a picture where they show on the stage, which stays
+    // there and fades (WindowTile's echo): lifted, if picked.
+    var echoes = null
+    if (rect && here) {
+      echoes = {}
+      for (var address in tileItems) {
+        var info = tileData[address]
+        var tile = tileItems[address]
+        if (!info || !info.onScreen || info.leaving || info.peek || info.workspace !== id) continue
+        var s = tile.scale
+        echoes[address] = { x: tile.x + tile.slideX + trackX + tile.width * (1 - s) / 2, y: tile.y + tile.height * (1 - s) / 2,
+          w: tile.width * s, h: tile.height * s }
+      }
+    }
     // The bar comes back with it (barReturn) if it was in the screen capture
     // (this desktop's) and shows on the desktop opening.
-    zoomInto = rect ? { desktop: id, rect: rect, fromName: spacesBar.expand <= 0.5, here: here,
+    zoomInto = rect ? { desktop: id, rect: rect, fromName: spacesBar.expand <= 0.5, here: here, echoes: echoes,
       bar: barOn(id) && (!monitor || barOn(monitor.activeWorkspace)) } : null
     service.close({ desktop: id, zoom: !!zoomInto, here: here })
     if (zoomInto) rebuild()
@@ -1146,6 +1207,11 @@ PanelWindow {
       if (win.service.closing || !win.zoomInto) return
       win.zoomInto = null
       win.rebuild()
+    }
+    // Going to a window not on an open special workspace (the scratchpad):
+    // its windows fade from the start (rebuild()).
+    function onExitAddressChanged() {
+      if (win.service.closing && win.service.exitAddress && win.monitor && win.monitor.specialWorkspace !== 0) win.rebuild()
     }
   }
 

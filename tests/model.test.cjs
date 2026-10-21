@@ -574,4 +574,44 @@ function applyPlan(snap, plan) {
   passed++;
 }
 
+// Whether Hyprland hides the scratchpad going to another desktop: off unless set.
+{
+  assert.equal(Model.hidesSpecialOnSwitch([]), false, "Hyprland's default");
+  assert.equal(Model.hidesSpecialOnSwitch([
+    { option: "general:border_size", int: 2 },
+    { option: "binds:hide_special_on_workspace_change", bool: true, set: true },
+  ]), true);
+  assert.equal(Model.hidesSpecialOnSwitch([{ option: "binds:hide_special_on_workspace_change", bool: false }]), false);
+  assert.equal(Model.hidesSpecialOnSwitch([{ option: "binds:hide_special_on_workspace_change", int: 1 }]), true, "older hyprctl");
+  passed++;
+}
+
+// Whether Hyprland hides the open scratchpad itself as the stage closes.
+{
+  const mon = (special, focused) => [{
+    id: 0, name: "eDP-1", x: 0, y: 0, width: 2560, height: 1600, scale: 2, transform: 0,
+    focused: focused !== false, activeWorkspace: { id: 1, name: "1" }, specialWorkspace: special ? { id: -98, name: "special:scratchpad" } : { id: 0, name: "" },
+    reserved: [0, 26, 0, 0],
+  }];
+  const clients = [
+    client("0xa1", "foot", 1, [12, 64], [622, 724]),
+    client("0xs1", "firefox", -98, [12, 64], [1256, 724], { workspace: { id: -98, name: "special:scratchpad" } }),
+    client("0xb1", "foot", 2, [12, 64], [1256, 724]),
+  ];
+  const open = plain(world(clients, [], mon(true)));
+  const m = open.monitors[0];
+  assert.equal(Model.specialHidesOnClose(open, m, "", 0, true), false, "staying, no window picked");
+  assert.equal(Model.specialHidesOnClose(open, m, "", 1, true), false, "the desktop on screen");
+  assert.equal(Model.specialHidesOnClose(open, m, "", 2, true), true, "another desktop");
+  assert.equal(Model.specialHidesOnClose(open, m, "", 2, false), false, "another desktop, kept open on a switch");
+  assert.equal(Model.specialHidesOnClose(open, m, "0xa1", 0, false), true, "a window not on it gets the keys");
+  assert.equal(Model.specialHidesOnClose(open, m, "0xs1", 0, true), false, "its own window");
+  assert.equal(Model.specialHidesOnClose(open, m, "0xb1", 0, false), true, "a window on another desktop");
+  const unfocused = plain(world(clients, [], mon(true, false)));
+  assert.equal(Model.specialHidesOnClose(unfocused, unfocused.monitors[0], "", 2, true), false, "Hyprland switches the focused display");
+  const closed = plain(world(clients, [], mon(false)));
+  assert.equal(Model.specialHidesOnClose(closed, closed.monitors[0], "0xa1", 2, true), false, "none open");
+  passed++;
+}
+
 console.log(`model: ${passed} checks passed`);
